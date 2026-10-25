@@ -1,5 +1,5 @@
 import type { Metadata } from 'next';
-import { Zap } from 'lucide-react';
+import { BrandMark } from '@/components/brand/BrandMark';
 import { LoginForm } from '@/app/login/LoginForm';
 import { sanitizeNextPath } from '@/components/console/nav';
 
@@ -33,11 +33,9 @@ export default async function LoginPage({ searchParams }: LoginPageProps): Promi
         className="pointer-events-none absolute inset-x-0 top-0 h-64 bg-[radial-gradient(60%_120%_at_50%_0%,var(--brand-soft),transparent_70%)]"
       />
       <div className="relative w-full max-w-sm">
-        <div className="mb-6 flex items-center justify-center gap-2">
-          <span className="flex h-8 w-8 items-center justify-center rounded-md bg-brand text-on-brand">
-            <Zap size={16} aria-hidden="true" />
-          </span>
-          <span className="text-base font-semibold text-text">AragonRouter</span>
+        {/* Brand mark sits above the card: same inline SVG as the favicon. */}
+        <div className="mb-6 flex items-center justify-center">
+          <BrandMark size={32} withWordmark />
         </div>
 
         <LoginForm nextPath={nextPath} />

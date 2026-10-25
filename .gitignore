@@ -33,6 +33,11 @@ data/
 .dev-server.port
 .dev-logs/
 
+# local scratch copies of the tree (throwaway analysis/verification workspaces that
+# some tooling drops next to the real sources; they duplicate src/ and tests/ and
+# must never be committed)
+%MUT%/
+
 # logs
 *.log
 npm-debug.log*

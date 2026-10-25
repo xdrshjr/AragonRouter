@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Zap } from 'lucide-react';
+import { BrandMark } from '@/components/brand/BrandMark';
 import { cn } from '@/components/ui/cn';
 import { NAV_ITEMS, isActivePath } from '@/components/console/nav';
 
@@ -25,12 +25,14 @@ export function Sidebar({ onNavigate }: SidebarProps): React.ReactNode {
         onClick={onNavigate}
         className="flex items-center gap-2 rounded-md px-2 py-1 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
       >
-        <span className="flex h-7 w-7 items-center justify-center rounded-md bg-brand text-on-brand">
-          <Zap size={15} aria-hidden="true" />
-        </span>
+        {/* Product mark + wordmark stacked over the subtitle.
+            `pl-9` (36px) = 28px mark + 8px BrandMark gap-2: keep it in sync with the
+            `size={28}` below, otherwise the subtitle silently drifts out of alignment. */}
         <span className="min-w-0">
-          <span className="block text-sm font-semibold leading-5 text-text">AragonRouter</span>
-          <span className="block truncate text-[11px] leading-4 text-muted">Relay console</span>
+          <BrandMark size={28} withWordmark />
+          <span className="mt-0.5 block truncate pl-9 text-[11px] leading-4 text-muted">
+            Relay console
+          </span>
         </span>
       </Link>
 

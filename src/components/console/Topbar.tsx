@@ -1,6 +1,7 @@
 'use client';
 
 import { LogOut, Menu } from 'lucide-react';
+import { BrandMark } from '@/components/brand/BrandMark';
 import { Button } from '@/components/ui/Button';
 import { ThemeToggle } from '@/components/console/ThemeToggle';
 import { findNavItem } from '@/components/console/nav';
@@ -33,6 +34,11 @@ export function Topbar({ pathname, onOpenNav, onSignOut, signingOut = false }: T
         >
           <Menu size={18} aria-hidden="true" />
         </Button>
+        {/* Product mark at the far left of the header. The rail repeats it on
+            desktop, but the identity has to survive the collapsed layout too. */}
+        <span className="flex shrink-0 items-center">
+          <BrandMark size={20} />
+        </span>
         <div className="min-w-0">
           <h1 className="truncate text-sm font-semibold leading-5 text-text">{item.label}</h1>
           <p className="hidden truncate text-[11px] leading-4 text-muted sm:block">{item.hint}</p>

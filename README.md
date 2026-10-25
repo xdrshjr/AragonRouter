@@ -1,4 +1,32 @@
-# AragonRouter
+<p align="center">
+  <img src="src/app/icon.svg" width="96" height="96" alt="AragonRouter 应用图标" />
+</p>
+
+<h1 align="center">AragonRouter</h1>
+
+<p align="center">
+  <strong>一句话定位</strong>：把 Anthropic 与 OpenAI 两种协议的请求收敛到同一个自托管网关，
+  单进程（Next.js 15 + Node.js 内置 SQLite）直接带出会话、Key 生命周期、凭证加密与用量观测，
+  不用外部数据库、不用 Docker、不用上线第三方中转。
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Next.js-15-3ecf8e?style=flat-square" alt="Next.js 15" />
+  <img src="https://img.shields.io/badge/TypeScript-strict-3178c6?style=flat-square" alt="TypeScript strict" />
+  <img src="https://img.shields.io/badge/Node.js-22.5%2B-339933?style=flat-square" alt="Node.js 22.5 以上" />
+  <img src="https://img.shields.io/badge/SQLite-node%3Asqlite-2f6f9f?style=flat-square" alt="node:sqlite" />
+  <img src="https://img.shields.io/badge/Tailwind-3.4-38bdf8?style=flat-square" alt="Tailwind 3.4" />
+  <img src="https://img.shields.io/badge/%E9%83%A8%E7%BD%B2-%E5%8D%95%E8%BF%9B%E7%A8%8B%E5%8D%95%E6%96%87%E4%BB%B6-3ecf8e?style=flat-square" alt="部署：单进程单文件" />
+</p>
+
+<p align="center">
+  <sub>离线纯文本徽标（徽标图裂时以此为准）：<code>Next.js 15</code> · <code>TypeScript strict</code> ·
+  <code>Node.js &gt;= 22.5</code> · <code>node:sqlite</code> · <code>Tailwind 3.4</code> ·
+  <code>部署：单进程单文件</code></sub>
+</p>
+
+上方图标引用仓库内的 `src/app/icon.svg`（与 `src/app/apple-icon.svg` 一同走 Next.js App Router
+的文件约定，浏览器标签页图标与本文档用的是同一份图形，不依赖外链图片或位图）。
 
 Anthropic / OpenAI 双协议 API 中转网关 + 管理控制台。带 SQLite 落库、Key 生命周期管理、
 上游凭证加密存储、请求日志与用量统计。单进程（Next.js 15 App Router + Node.js 内置
@@ -9,6 +37,70 @@ Anthropic / OpenAI 双协议 API 中转网关 + 管理控制台。带 SQLite 落
 - 管理侧（控制台 + REST）：登录会话、Key 增查吊销、Provider 增删改查/连通性测试、
   日志分页、用量统计
 - `stream: true` 时按 SSE 逐块透传，不整体缓冲
+
+> 第一次接触本项目？直接跳到「快速开始」三条命令；只想知道能做什么，看「功能特性」表格。
+
+---
+
+## 快速开始
+
+前提：Node.js >= 22.5、Windows 自带的 PowerShell 5.1+（见「环境要求」）。下面三条命令在
+`cmd.exe` 里直接粘贴即可，脚本参数全部是 `scripts\*.ps1` 实际支持的那几个。
+
+第一条 —— 一键启动（装依赖 → 生成 `.env.local` → 挑空闲端口 → 后台启动 → 等就绪 → 打印
+URL / PID / 端口 / 日志路径 / 管理员口令）：
+
+```cmd
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\start-dev.ps1
+```
+
+第二条 —— 打开控制台。端口从 `.dev-server.port` 读取，脚本从 3000 起递增挑空闲端口，
+**一切以脚本实际打印的端口为准**，不要写死 3000：
+
+```cmd
+powershell -NoProfile -Command "start ('http://127.0.0.1:' + (Get-Content .dev-server.port -Raw).Trim() + '/console')"
+```
+
+（也可以直接把启动横幅里打印的 URL 粘进浏览器；用 `.env.local` 里的 `ADMIN_PASSWORD` 登录。）
+
+第三条 —— 一键关闭（按 PID 结束整棵进程树 → 端口兜底 + 区间扫描 → 清理运行期记录）：
+
+```cmd
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\stop-dev.ps1
+```
+
+**首次运行会自动生成 `.env.local` 并打印管理员口令**，具体是：
+
+1. `.env.local` 由脚本用真实随机值生成（`ADMIN_PASSWORD` / `SESSION_SECRET` /
+   `ENCRYPTION_KEY` / `DATABASE_PATH`）；已存在的文件只在字段缺失、仍是模板占位值、
+   或不满足强度要求时才修补，并写明修补原因；
+2. 脚本生成（或重新生成）口令时，控制台横幅会打印本次生效的管理员口令
+   （18 字节 base64url = 24 位随机串）——它**只在这一处出现**；沿用 `.env.local` 里
+   已有口令时横幅只提示「沿用 .env.local 中已有值」，不再重复打印。`.env.local` 是唯一
+   持久副本（`data/`、`.dev-logs/` 都在 `.gitignore` 里，写进 `.dev-logs/child-*.log`
+   的口令行已脱敏）。请立即存到密码管理器；
+3. `node_modules\next` 不存在时自动执行 `npm install`；Node 版本或 `node:sqlite`
+   探活不通过会直接报错并给升级指引，不会带着坏环境启动。
+
+> 口令忘了或对不上：删掉 `.env.local`，重新运行 `scripts\start-dev.ps1`，会重新生成并打印新口令。
+> 只想验证链路是否通：`powershell -NoProfile -ExecutionPolicy Bypass -File scripts\test-api.ps1`
+> （自带离线桩上游，见「一键启停 → 端到端验证」）。
+
+---
+
+## 功能特性
+
+| 能力 | 状态 | 说明与入口 |
+| --- | --- | --- |
+| 双协议转发 | 已实现 | Anthropic `POST /api/v1/messages` 与 OpenAI 兼容 `POST /api/v1/chat/completions` 各自独立转发，`GET /api/v1/models` 聚合可用模型；按 provider 行上的 `protocol` 选路，**不做协议互转** |
+| SSE 流式 | 已实现 | 请求带 `stream: true` 时用 `TransformStream` 逐块透传，不整体缓冲；旁路解析 SSE 只为统计 input/output tokens，连接断开也会补写日志 |
+| Key 生命周期 | 已实现 | 创建时明文只返回一次（`ar-` + 32 位十六进制），列表不含明文，软吊销保留行（`revokedAt`），并记录 `lastUsedAt`、`keyPrefix`；库里只存 SHA-256（`src/lib/apikeys.ts`） |
+| 凭证 AES-256-GCM 加密 | 已实现 | 上游 Key 加密存 SQLite，接口只回 `maskedKey`（如 `sk-a…a1b2`）；换过 `ENCRYPTION_KEY` 后旧密文无法解密，需在控制台重存（`src/lib/crypto.ts`） |
+| 请求日志 | 已实现 | 每次转发落 `request_logs`（状态码、耗时、tokens、模型），`GET /api/admin/logs` 支持 `limit` / 游标 / `status` / `model` 过滤，控制台「日志」页同一份数据 |
+| 用量统计 | 已实现 | `GET /api/admin/stats?range=24h\|7d\|30d` 聚合请求数与 tokens，`series` 为等宽时间桶可直接画图；控制台「概览」页内联 SVG 折线 |
+| 一键启停脚本 | 已实现 | `scripts\start-dev.ps1`（自动挑端口、依赖缺失自动装、命名互斥量防并发、就绪后复查端口归属）与 `scripts\stop-dev.ps1`（按 PID 结束进程树、只杀**能证明属于本仓库**的进程），幂等可重复执行 |
+| 离线端到端测试 | 已实现 | `scripts\test-api.ps1` 自带本地桩上游（`tests/integration/stub-upstream.mjs`），无网络也能跑通「401 → 登录 → 建 Key → 建 Provider → 非流式 → SSE → OpenAI → models → 坏 key → 凭证注入/剥离 → 日志 → 统计 → 停机」并逐条打印 `PASS`/`FAIL` |
+| 管理控制台 | 已实现 | 暗色优先 UI（`/console`）：概览、Key、Provider（含「Test」连通性按钮）、日志、设置；会话为 HMAC 签名 Cookie，失败登录限流 |
 
 ---
 
@@ -68,7 +160,10 @@ Anthropic / OpenAI 双协议 API 中转网关 + 管理控制台。带 SQLite 落
 │   └── lib/                                    db / env / crypto / auth / apikeys /
 │                                               providers / upstream / proxy / logs / stats
 ├── tests/
-│   ├── unit/                                   Vitest 单元测试
+│   ├── unit/                                   Vitest 单元测试（根 vitest.config.ts 唯一 include）
+│   ├── ui/                                     控制台 UI 测试（独立配置，需 --config 显式运行）
+│   │   ├── vitest.config.ts                    含 .tsx、esbuild jsx=automatic、node 环境
+│   │   └── *.test.ts · *.test.tsx              查询构建 / 格式化 / SVG 几何 / 渲染与 a11y
 │   └── integration/
 │       ├── vitest.config.ts                    集成测试专用配置（串行执行、别名 @、node 环境）
 │       ├── stub-upstream.mjs                   本地桩上游（离线端到端验证用）
@@ -77,6 +172,7 @@ Anthropic / OpenAI 双协议 API 中转网关 + 管理控制台。带 SQLite 落
 │       ├── gateway-stub.integration.test.ts    真实路由 → 桩上游的跨模块集成测试（C2/C5–C9）
 │       ├── scripts-contract.test.ts            脚本产物与契约的静态校验
 │       ├── scripts-races.test.ts               并发启动 / 孤儿进程扫描的回归测试（沙箱 + 假 dev server）
+│       ├── scripts-readiness.test.ts           就绪预算 / 运行期记录完整性回归（桩 dev server 跑真实 start-dev.ps1）
 │       ├── scripts-resilience.test.ts          损坏的运行期记录 + README/路由契约边界测试
 │       ├── scripts-runtime.test.ts             启停脚本运行时行为、test-api.ps1 失败语义
 │       └── port-listener.ps1                   测试用的端口占用辅助进程（验证端口兜底不误杀外部进程）
@@ -307,6 +403,15 @@ npx vitest run --config tests/integration/vitest.config.ts
 > 并行跑两个这类文件时，一个文件的停机/扫描会杀掉或清掉另一个文件正在用的服务与记录。
 > 串行多花几分钟，但结果是确定的。
 
+控制台 UI 测试（`tests/ui/**`，含 `.tsx`）同样不在根配置的 include 里，要显式指定它自己的配置：
+
+```cmd
+npx vitest run --config tests/ui/vitest.config.ts
+```
+
+> 记住这条边界：`npm test` 只跑 `tests/unit/**`（根 `vitest.config.ts` 的 include 仅此一条），
+> `tests/ui/**` 与 `tests/integration/**` 都必须带 `--config` 才会运行，详见「已知限制」。
+
 ---
 
 ## 6. API 与 curl 示例
@@ -438,6 +543,8 @@ HTTP/1.1 401 Unauthorized
 | `无法加载内置模块 node:sqlite` | Node 版本过旧或该构建仍门控该模块：升级到 22.13+/23+，或 `set NODE_OPTIONS=--experimental-sqlite` 后重启 |
 | `端口 <n> 已被占用` | 省略 `-Port` 让脚本自动挑空闲端口，或换一个端口；也可先 `stop-dev.ps1` 清掉旧实例 |
 | 启动卡在「等待服务就绪」然后失败 | 看 `.dev-logs/dev.log` 与 `.dev-logs/dev.err.log` 末尾；常见原因是 `.env.local` 缺字段或依赖装了一半，删掉 `node_modules` 重装 |
+| `等待超过 120 秒仍未就绪` | 就绪等待上限是 `-TimeoutSeconds <n>`（默认 **120 秒**，例如 `scripts\start-dev.ps1 -TimeoutSeconds 300`）；`test-api.ps1` 用 `-StartTimeoutSeconds <n>` 透传同一个上限。超时后脚本会自动打印 `.dev-logs/dev.log` / `dev.err.log` 的最后 30 行，先据此判断是编译慢还是端口/环境问题 |
+| `test-api.ps1` 第一条断言就超时，或刚启动时首条 `FAIL` | 首次 `next dev` 是**冷编译**（路由与页面要现编译），就绪探测拿到 HTTP 响应之后，第一条断言仍可能正好撞上这段编译时间——这是首次编译慢，不是功能坏了：**直接重跑一次** `scripts\test-api.ps1` 即可（此时 `.next` 已热，通常很快通过）；机器确实慢就加大 `-StartTimeoutSeconds` |
 | `依赖缺失…已指定 -SkipInstall` | 手动执行 `npm install`，然后重新启动 |
 | 端口释放不掉 | `scripts\stop-dev.ps1 -PurgeLogs` 再试；仍占用时用 `netstat -ano \| findstr :<port>` 找到 PID 后 `taskkill /PID <pid> /T /F` |
 | `端口 <n> 被不属于本仓库的进程占用（PID=…）` | 端口是别的项目在用（例如另一仓库的 `next start -p <同一端口>`）。脚本**故意不杀**它，只报告冲突并退出 1：确认那个项目的归属后自行处理，或删掉过期的 `.dev-server.port` 让本仓库重新选端口 |
@@ -476,3 +583,25 @@ HTTP/1.1 401 Unauthorized
   常量时间比较，并对失败登录做限流；
 - 请求体与缓冲响应都有硬上限，防止单个低权限 Key 或恶意上游耗尽内存；
 - `.env.local`、`data/`、`.dev-logs/` 与运行期 PID/端口文件均在 `.gitignore` 中。
+
+---
+
+## 已知限制
+
+诚实划界：下面是当前实现**明确不做**或**覆盖不到**的部分。按现状规划使用方式，不要指望它们。
+
+### 测试覆盖的边界
+
+| 限制 | 现状 | 影响与做法 |
+| --- | --- | --- |
+| `tests/ui/**` 不在 `npx vitest run` 的 include 里 | 根 `vitest.config.ts` 的 include 只有 `tests/unit/**/*.test.ts`，所以 `npm test` **不会**执行 `tests/ui/**`（含 `.tsx`）与 `tests/integration/**` | 改了控制台请显式跑 `npx vitest run --config tests/ui/vitest.config.ts`；改了转发/脚本请跑 `npx vitest run --config tests/integration/vitest.config.ts`。`npm test` 全绿**不等于** UI 与脚本回归通过 |
+| 端到端链路由 `scripts/test-api.ps1` 承担 | 它要真实起 dev server、真实端口、真实进程树，还要拉起桩上游，因此**不在** `npm test` 里，只能手工运行 | 改动转发逻辑前后运行 `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\test-api.ps1`，以退出码与 `PASS`/`FAIL` 明细为准。它完全离线，但要占端口与那把命名互斥量，且首次运行受冷编译影响（见「故障排查」） |
+| 上游真实连通性需人工确认 | 桩上游只验证协议形状、鉴权与凭证注入/剥离，**不校验**真实上游：Key 是否有效、模型名是否存在、网络是否可达，都不在自动化覆盖范围内 | 在控制台「Provider」页对每个 provider 点「Test」（等价于 `POST /api/admin/providers/<id>/test`，5 秒超时探测 `/v1/models`）手工确认；接真实上游前这一步不能省 |
+
+### 运行时与产品边界
+
+- **单管理员**：只有一份 `ADMIN_PASSWORD` 会话，没有多用户、角色或权限分级；操作记录也不区分操作人；
+- **不做协议互转**：provider 行上的 `protocol` 决定上游路径，OpenAI 形状的请求不会被翻译成 Anthropic 形状（反之亦然），也没有模型名映射/别名；
+- **单机单进程**：数据层是 `node:sqlite` 本地单文件（WAL），启停互斥量是按仓库路径派生的 Windows 命名 Mutex，因此不支持多机/多实例共享同一份数据，也不适合水平扩展；
+- **无 Mock 模式**：没有可用 provider 时转发直接返回结构化错误 JSON，不会伪造成功响应；
+- **启停脚本仅 Windows PowerShell**：`scripts/*.ps1` 依赖 Windows 的进程/端口内核对象，Linux/macOS 上请自行 `npm run dev -- -p <port> -H 127.0.0.1` 并用 `curl` 等工具验证。
