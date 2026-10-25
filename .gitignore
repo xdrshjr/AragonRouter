@@ -16,6 +16,10 @@ coverage/
 .env
 .env.local
 .env.*.local
+# any other env variant (.env.production, .env.development, ...) may carry real
+# secrets, so ignore them all; only the public placeholder template stays tracked.
+.env.*
+!.env.example
 
 # sqlite database + WAL side files
 data/
