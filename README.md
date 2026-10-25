@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="src/app/icon.svg" width="96" height="96" alt="AragonRouter 应用图标" />
+  <img src="public/brand-mark.png" width="96" height="96" alt="AragonRouter 应用图标" />
 </p>
 
 <h1 align="center">AragonRouter</h1>
@@ -25,8 +25,25 @@
   <code>部署：单进程单文件</code></sub>
 </p>
 
-上方图标引用仓库内的 `src/app/icon.svg`（与 `src/app/apple-icon.svg` 一同走 Next.js App Router
-的文件约定，浏览器标签页图标与本文档用的是同一份图形，不依赖外链图片或位图）。
+上方图标是 AI 生成（Gemini 图像模型）后用 `design/build-brand-assets.py` 规整的位图：
+脚本把画面投影到 C10 双色（`#121212` 底板 + `#3ecf8e` 品牌绿）再逐级下采样，因此图标里的
+绿与控制台的强调色是同一个色值。同一份母版派生出三处产物，全部走 Next.js App Router 的
+文件约定，不依赖外链图片：
+
+| 文件 | 尺寸 | 用途 | Next 注入的标签 |
+| --- | --- | --- | --- |
+| `public/brand-mark.png` | 512×512 | 页面内品牌标识（`BrandMark`） | —（普通 `<img>`） |
+| `src/app/icon.png` | 256×256 | 浏览器标签页 favicon | `<link rel="icon" type="image/png">` |
+| `src/app/apple-icon.png` | 180×180 | iOS 主屏图标 | `<link rel="apple-touch-icon" sizes="180x180">` |
+
+重新生成整套图标：
+
+```bash
+python design/build-brand-assets.py --source design/<master>.png
+```
+
+`design/` 下保留 AI 生成的原始母版与像素自检脚本 `design/inspect-logo.py`（检查出血、
+主色板、图形包围盒与居中情况），便于换一版美术时复现同样的规整流程。
 
 Anthropic / OpenAI 双协议 API 中转网关 + 管理控制台。带 SQLite 落库、Key 生命周期管理、
 上游凭证加密存储、请求日志与用量统计。单进程（Next.js 15 App Router + Node.js 内置
@@ -154,11 +171,19 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\stop-dev.ps1
 │   │   │   └── admin/                          会话 / keys / providers / logs / stats
 │   │   ├── login/                              登录页（console-ui 提供）
 │   │   ├── console/                            控制台页面（概览/Key/Provider/日志/设置）
+│   │   ├── icon.png · apple-icon.png           图标路由（App Router 文件约定，构建产物见 brand-mark）
 │   │   ├── layout.tsx · globals.css            全局布局与样式
 │   │   └── page.tsx                            `/` 重定向到 `/console`（见 next.config.ts）
 │   ├── components/                             控制台组件
+│   │   └── brand/BrandMark.tsx                 品牌标识（消费 public/brand-mark.png）
 │   └── lib/                                    db / env / crypto / auth / apikeys /
 │                                               providers / upstream / proxy / logs / stats
+├── public/
+│   └── brand-mark.png                          512×512 品牌母版（页面内使用）
+├── design/                                     图标美术资产与可复现流水线
+│   ├── 2026-10-25-*.png                        AI 生成的原始母版（候选稿，1024×1024）
+│   ├── build-brand-assets.py                   投影到 C10 双色 → 派生出三档图标
+│   └── inspect-logo.py                         像素自检（出血 / 主色板 / 包围盒 / 居中）
 ├── tests/
 │   ├── unit/                                   Vitest 单元测试（根 vitest.config.ts 唯一 include）
 │   ├── ui/                                     控制台 UI 测试（独立配置，需 --config 显式运行）

@@ -18,12 +18,11 @@ import './globals.css';
  * file-based icons when `metadata.icons` is unset), which would drop the
  * content-hashed favicon URL and force a second, hand-written copy of every entry.
  * The convention gives us both links for free:
- *  - `src/app/icon.svg`       -> `<link rel="icon" type="image/svg+xml">`
+ *  - `src/app/icon.png`       -> `<link rel="icon" type="image/png">`
  *  - `src/app/apple-icon.png` -> `<link rel="apple-touch-icon" sizes="180x180">`
- *    Next routes only `apple-icon.{jpg,jpeg,png}` for the iOS tile (SVG is not in
- *    `STATIC_METADATA_IMAGES.apple`), so the tile is a PNG rasterised from the
- *    180x180 vector master `src/app/apple-icon.svg` by
- *    `src/components/brand/generate-apple-icon.mjs`.
+ *    (SVG is not in `STATIC_METADATA_IMAGES.apple`, so both entries are PNG.)
+ * Both PNGs are derived from the AI-generated master by `design/build-brand-assets.py`,
+ * which projects the art onto the C10 duotone pair before downsampling.
  */
 export const metadata: Metadata = {
   title: {
