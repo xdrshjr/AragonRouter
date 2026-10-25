@@ -1,0 +1,42 @@
+# dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# next.js build output
+.next/
+out/
+build/
+
+# production
+coverage/
+*.tsbuildinfo
+
+# local env files (never commit secrets)
+.env
+.env.local
+.env.*.local
+
+# sqlite database + WAL side files
+data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# dev server runtime artifacts (produced by scripts/start-dev.ps1)
+.dev-server.pid
+.dev-server.port
+.dev-logs/
+
+# logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# os / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

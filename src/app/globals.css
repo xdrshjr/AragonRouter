@@ -1,0 +1,246 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ---------------------------------------------------------------------------
+ * C10 design tokens
+ *
+ * Dark is the default palette: `:root` carries it so the first paint is dark
+ * even before JavaScript runs. `.light` on <html> (set by ThemeToggle and by the
+ * anti-flash script in src/app/layout.tsx) swaps in the light palette.
+ * These custom properties are the contract consumed by gw-hardening via
+ * tailwind.config.ts.
+ * ------------------------------------------------------------------------- */
+@layer base {
+  :root {
+    /* dark (default) */
+    --bg: #121212;
+    --surface: #171717;
+    --surface-2: #1f1f1f;
+    --border: #2a2a2a;
+    --border-strong: #3a3a3a;
+    --text: #ededed;
+    --text-muted: #8f8f8f;
+    --brand: #3ecf8e;
+    --brand-hover: #24b47e;
+    --on-brand: #04150d;
+    --danger: #f04438;
+    --warning: #f5a623;
+    --info: #4d9dff;
+
+    /* derived helpers (never part of the public token contract) */
+    --dot: rgba(255, 255, 255, 0.055);
+    --brand-soft: rgba(62, 207, 142, 0.12);
+    --danger-soft: rgba(240, 68, 56, 0.14);
+    --warning-soft: rgba(245, 166, 35, 0.14);
+    --info-soft: rgba(77, 157, 255, 0.14);
+    --overlay: rgba(0, 0, 0, 0.68);
+    --radius-control: 6px;
+    --radius-card: 8px;
+
+    color-scheme: dark;
+  }
+
+  html.light {
+    --bg: #ffffff;
+    --surface: #f8f8f8;
+    --surface-2: #f1f1f1;
+    --border: #e5e5e5;
+    --border-strong: #d4d4d4;
+    --text: #1a1a1a;
+    --text-muted: #6b6b6b;
+    --brand: #3ecf8e;
+    --brand-hover: #24b47e;
+    --on-brand: #04150d;
+    --danger: #d92d20;
+    --warning: #b7791f;
+    --info: #1f6feb;
+
+    --dot: rgba(0, 0, 0, 0.065);
+    --brand-soft: rgba(62, 207, 142, 0.16);
+    --danger-soft: rgba(217, 45, 32, 0.1);
+    --warning-soft: rgba(183, 121, 31, 0.12);
+    --info-soft: rgba(31, 111, 235, 0.1);
+    --overlay: rgba(17, 17, 17, 0.36);
+
+    color-scheme: light;
+  }
+
+  * {
+    border-color: var(--border);
+  }
+
+  html {
+    height: 100%;
+    background-color: var(--bg);
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    min-height: 100%;
+    background-color: var(--bg);
+    color: var(--text);
+    /* C10: system font stack, 13-14px body copy, no next/font. */
+    font-family:
+      -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
+      'Noto Sans', sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji';
+    font-size: 14px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    color: var(--text);
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  ::selection {
+    background: var(--brand);
+    color: var(--on-brand);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--brand);
+    outline-offset: 2px;
+  }
+
+  /* Thin, palette-aware scrollbars (WebKit + Firefox). */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-strong) transparent;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background-color: var(--border-strong);
+    border: 2px solid transparent;
+    border-radius: 9999px;
+    background-clip: content-box;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: var(--text-muted);
+    background-clip: content-box;
+  }
+
+  /* The native date/select controls follow the token palette. */
+  input,
+  select,
+  textarea,
+  button {
+    font: inherit;
+    color: inherit;
+  }
+
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--text-muted);
+    opacity: 1;
+  }
+
+  /* Suppress the browser's yellow autofill wash, which ignores the dark palette. */
+  input:-webkit-autofill,
+  input:-webkit-autofill:hover,
+  input:-webkit-autofill:focus {
+    -webkit-text-fill-color: var(--text);
+    -webkit-box-shadow: 0 0 0 1000px var(--surface-2) inset;
+    transition: background-color 9999s ease-out 0s;
+  }
+}
+
+@layer components {
+  /* Dot-matrix backdrop used by the console shell and the login screen. */
+  .dot-grid {
+    background-image: radial-gradient(circle at 1px 1px, var(--dot) 1px, transparent 0);
+    background-size: 22px 22px;
+    background-position: 0 0;
+  }
+
+  /* C10: 11px uppercase section/category labels. */
+  .label-caps {
+    font-size: 11px;
+    line-height: 16px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+
+  /* Tabular, monospaced rendering for keys, models and numbers. */
+  .mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+    font-variant-ligatures: none;
+  }
+
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Hairline divider that survives the light palette. */
+  .hairline {
+    border-color: var(--border);
+  }
+
+  .skeleton {
+    background: linear-gradient(
+      90deg,
+      var(--surface-2) 0%,
+      var(--border) 50%,
+      var(--surface-2) 100%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.4s ease-in-out infinite;
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  /* Hide an element until it is focused (skip link). */
+  .skip-link {
+    position: absolute;
+    left: -9999px;
+    top: 0;
+    z-index: 100;
+  }
+
+  .skip-link:focus {
+    left: 16px;
+    top: 16px;
+    padding: 8px 12px;
+    border-radius: var(--radius-control);
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
