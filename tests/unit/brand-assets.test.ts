@@ -30,6 +30,21 @@ interface DecodedPng {
 }
 
 /**
+ * Byte read that satisfies `noUncheckedIndexedAccess`: the project compiles with
+ * it on, and a decoder that asserts its own bounds is exactly where an undefined
+ * would otherwise leak into arithmetic.
+ */
+function at(buf: Buffer, index: number): number {
+  return buf[index] ?? 0;
+}
+
+/** Pixel read from a decoded buffer: (r,g,b) at x,y. */
+function rgb(png: DecodedPng, x: number, y: number): [number, number, number] {
+  const base = (y * png.width + x) * 3;
+  return [at(png.pixels, base), at(png.pixels, base + 1), at(png.pixels, base + 2)];
+}
+
+/**
  * Minimal PNG reader for the subset our build script emits: 8-bit truecolour
  * (colour type 2), no interlace, filter types 0-4. Enough to assert size and
  * palette without a decoder dependency.
@@ -53,9 +68,9 @@ function decodePng(path: string): DecodedPng {
     if (type === 'IHDR') {
       width = data.readUInt32BE(0);
       height = data.readUInt32BE(4);
-      bitDepth = data[8];
-      colourType = data[9];
-      interlace = data[12];
+      bitDepth = at(data, 8);
+      colourType = at(data, 9);
+      interlace = at(data, 12);
     } else if (type === 'IDAT') {
       idat.push(data);
     } else if (type === 'IEND') {
@@ -78,15 +93,15 @@ function decodePng(path: string): DecodedPng {
 
   let pos = 0;
   for (let y = 0; y < height; y += 1) {
-    const filter = raw[pos];
+    const filter = at(raw, pos);
     pos += 1;
     raw.copy(current, 0, pos, pos + stride);
     pos += stride;
     for (let i = 0; i < stride; i += 1) {
-      const left = i >= channels ? current[i - channels] : 0;
-      const up = previous[i];
-      const upLeft = i >= channels ? previous[i - channels] : 0;
-      let value = current[i];
+      const left = i >= channels ? at(current, i - channels) : 0;
+      const up = at(previous, i);
+      const upLeft = i >= channels ? at(previous, i - channels) : 0;
+      let value = at(current, i);
       if (filter === 1) value += left;
       else if (filter === 2) value += up;
       else if (filter === 3) value += Math.floor((left + up) / 2);
@@ -102,9 +117,9 @@ function decodePng(path: string): DecodedPng {
       current[i] = value & 0xff;
     }
     for (let x = 0; x < width; x += 1) {
-      out[(y * width + x) * 3] = current[x * channels];
-      out[(y * width + x) * 3 + 1] = current[x * channels + 1];
-      out[(y * width + x) * 3 + 2] = current[x * channels + 2];
+      out[(y * width + x) * 3] = at(current, x * channels);
+      out[(y * width + x) * 3 + 1] = at(current, x * channels + 1);
+      out[(y * width + x) * 3 + 2] = at(current, x * channels + 2);
     }
     current.copy(previous);
   }
@@ -176,9 +191,8 @@ describe('the art is projected onto the exact C10 duotone pair', () => {
       [w - 1, Math.floor(h / 2)],
     ];
     for (const [x, y] of points) {
-      const i = (y * w + x) * 3;
       expect(
-        [pixels[i], pixels[i + 1], pixels[i + 2]],
+        rgb(png, x, y),
         `corner/edge pixel (${x},${y}) is not fully-flattened --bg`,
       ).toEqual([BG.r, BG.g, BG.b]);
     }
@@ -189,9 +203,9 @@ describe('the art is projected onto the exact C10 duotone pair', () => {
     let offRamp = 0;
     let whitish = 0;
     for (let i = 0; i < pixels.length; i += 3) {
-      const r = pixels[i];
-      const g = pixels[i + 1];
-      const b = pixels[i + 2];
+      const r = at(pixels, i);
+      const g = at(pixels, i + 1);
+      const b = at(pixels, i + 2);
       if (r > 240 && g > 240 && b > 240) whitish += 1;
       else if (!isOnBrandRamp(r, g, b)) offRamp += 1;
     }
@@ -203,7 +217,8 @@ describe('the art is projected onto the exact C10 duotone pair', () => {
     const { pixels } = png;
     let best = -1;
     for (let i = 0; i < pixels.length; i += 3) {
-      if (pixels[i + 1] - pixels[i] > best) best = pixels[i + 1] - pixels[i];
+      const greenness = at(pixels, i + 1) - at(pixels, i);
+      if (greenness > best) best = greenness;
     }
     // Peak greenness must be close to BRAND.g - BRAND.r = 0xcf - 0x3e = 145.
     expect(best).toBeGreaterThanOrEqual(135);
@@ -218,7 +233,7 @@ describe('the art is projected onto the exact C10 duotone pair', () => {
     for (let y = 0; y < h; y += 1) {
       for (let x = 0; x < w; x += 1) {
         const i = (y * w + x) * 3;
-        if (pixels[i + 1] - pixels[i] > 25) {
+        if (at(pixels, i + 1) - at(pixels, i) > 25) {
           if (x < minX) minX = x;
           if (x > maxX) maxX = x;
           if (y < minY) minY = y;

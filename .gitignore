@@ -44,6 +44,10 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
+# python scratch produced by the design/ pipeline scripts
+__pycache__/
+*.pyc
+
 # os / editor
 .DS_Store
 Thumbs.db

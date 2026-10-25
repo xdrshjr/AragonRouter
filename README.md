@@ -25,10 +25,12 @@
   <code>部署：单进程单文件</code></sub>
 </p>
 
-上方图标是 AI 生成（Gemini 图像模型）后用 `design/build-brand-assets.py` 规整的位图：
-脚本把画面投影到 C10 双色（`#121212` 底板 + `#3ecf8e` 品牌绿）再逐级下采样，因此图标里的
-绿与控制台的强调色是同一个色值。同一份母版派生出三处产物，全部走 Next.js App Router 的
-文件约定，不依赖外链图片：
+上方图标是 AI 生成后用 `design/build-brand-assets.py` 规整的位图：脚本把画面投影到 C10 双色
+（`#121212` 底板 + `#3ecf8e` 品牌绿）再逐级下采样，因此图标里的绿与控制台的强调色是同一个
+色值。母版来自阿里云 MaaS 的 `qwen-image-3.0-pro`（见 `design/ai-logo.py`），一次生成多个
+构图方向后用 `design/score-logos.py` 按覆盖率、形状完整度、对称性、居中与留白客观打分，
+再把胜出的那张规整成图标。同一份母版派生出三处产物，全部走 Next.js App Router 的文件约定，
+不依赖外链图片：
 
 | 文件 | 尺寸 | 用途 | Next 注入的标签 |
 | --- | --- | --- | --- |
@@ -36,14 +38,18 @@
 | `src/app/icon.png` | 256×256 | 浏览器标签页 favicon | `<link rel="icon" type="image/png">` |
 | `src/app/apple-icon.png` | 180×180 | iOS 主屏图标 | `<link rel="apple-touch-icon" sizes="180x180">` |
 
-重新生成整套图标：
+重新生成整套图标（换一版美术只需换 `--source`）：
 
 ```bash
-python design/build-brand-assets.py --source design/<master>.png
+python design/ai-logo.py --all                                   # 生成候选（需 design/.env）
+python design/score-logos.py design/ai/*.png                     # 客观打分排序
+python design/contact-sheet.py                                   # 拼对比图 design/logo-candidates.png
+python design/build-brand-assets.py --source design/ai/<选中>.png  # 规整成三档图标
 ```
 
-`design/` 下保留 AI 生成的原始母版与像素自检脚本 `design/inspect-logo.py`（检查出血、
-主色板、图形包围盒与居中情况），便于换一版美术时复现同样的规整流程。
+`design/` 下保留 AI 生成的原始母版（`design/ai/`，1328×1328）、打分脚本、对比图生成器与
+像素自检脚本 `design/inspect-logo.py`（检查出血、主色板、包围盒与居中情况）。生成用的端点
+与 Key 放在 `design/.env`，该文件被 `.gitignore` 覆盖，不会进仓库。
 
 Anthropic / OpenAI 双协议 API 中转网关 + 管理控制台。带 SQLite 落库、Key 生命周期管理、
 上游凭证加密存储、请求日志与用量统计。单进程（Next.js 15 App Router + Node.js 内置
@@ -181,7 +187,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\stop-dev.ps1
 ├── public/
 │   └── brand-mark.png                          512×512 品牌母版（页面内使用）
 ├── design/                                     图标美术资产与可复现流水线
-│   ├── 2026-10-25-*.png                        AI 生成的原始母版（候选稿，1024×1024）
+│   ├── ai/                                     AI 生成的候选母版（qwen-image-3.0-pro，1328×1328）
+│   ├── ai-logo.py                              生成候选（提示词按 motif 拆分，负面词统一）
+│   ├── score-logos.py                          客观打分：覆盖率/完整度/对称/居中/留白/色板
+│   ├── contact-sheet.py                        拼对比图（原始 / 双色 / 16px / 32px）
 │   ├── build-brand-assets.py                   投影到 C10 双色 → 派生出三档图标
 │   └── inspect-logo.py                         像素自检（出血 / 主色板 / 包围盒 / 居中）
 ├── tests/
