@@ -5,9 +5,15 @@
 <h1 align="center">AragonRouter</h1>
 
 <p align="center">
-  <strong>一句话定位</strong>：把 Anthropic 与 OpenAI 两种协议的请求收敛到同一个自托管网关，
-  单进程（Next.js 15 + Node.js 内置 SQLite）直接带出会话、Key 生命周期、凭证加密与用量观测，
-  不用外部数据库、不用 Docker、不用上线第三方中转。
+  <strong>把 Anthropic 与 OpenAI 两种协议的请求，收敛到同一个自托管网关</strong><br />
+  单进程（Next.js 15 + Node.js 内置 SQLite）就把会话、Key 生命周期、上游凭证加密与用量观测
+  一起带上 —— 不用外部数据库、不用 Docker、不用上线第三方中转。
+</p>
+
+<p align="center">
+  <sub><b>适合</b>：想给一堆客户端一个统一出口、上游 Key 自己攥着、又要看用量的人 ·
+  <b>不适合</b>：需要多租户、多实例共享同一份数据、或跨协议互转（见
+  <a href="#10-已知限制">已知限制</a>）</sub>
 </p>
 
 <p align="center">
@@ -25,35 +31,15 @@
   <code>部署：单进程单文件</code></sub>
 </p>
 
-上方图标是 AI 生成后用 `design/build-brand-assets.py` 规整的位图：脚本把画面投影到 C10 双色
-（`#121212` 底板 + `#3ecf8e` 品牌绿）再逐级下采样，因此图标里的绿与控制台的强调色是同一个
-色值。母版来自阿里云 MaaS 的 `qwen-image-3.0-pro`（见 `design/ai-logo.py`），一次生成多个
-构图方向后用 `design/score-logos.py` 按覆盖率、形状完整度、对称性、居中与留白客观打分，
-再把胜出的那张规整成图标。同一份母版派生出三处产物，全部走 Next.js App Router 的文件约定，
-不依赖外链图片：
+<p align="center">
+  <a href="#截图"><b>先看截图</b></a> ·
+  <a href="#快速开始">三条命令跑起来</a> ·
+  <a href="#功能特性">功能特性</a> ·
+  <a href="#6-api-与-curl-示例">API 示例</a> ·
+  <a href="#7-故障排查">故障排查</a>
+</p>
 
-| 文件 | 尺寸 | 用途 | Next 注入的标签 |
-| --- | --- | --- | --- |
-| `public/brand-mark.png` | 512×512 | 页面内品牌标识（`BrandMark`） | —（普通 `<img>`） |
-| `src/app/icon.png` | 256×256 | 浏览器标签页 favicon | `<link rel="icon" type="image/png">` |
-| `src/app/apple-icon.png` | 180×180 | iOS 主屏图标 | `<link rel="apple-touch-icon" sizes="180x180">` |
-
-重新生成整套图标（换一版美术只需换 `--source`）：
-
-```bash
-python design/ai-logo.py --all                                   # 生成候选（需 design/.env）
-python design/score-logos.py design/ai/*.png                     # 客观打分排序
-python design/contact-sheet.py                                   # 拼对比图 design/logo-candidates.png
-python design/build-brand-assets.py --source design/ai/<选中>.png  # 规整成三档图标
-```
-
-`design/` 下保留 AI 生成的原始母版（`design/ai/`，1328×1328）、打分脚本、对比图生成器与
-像素自检脚本 `design/inspect-logo.py`（检查出血、主色板、包围盒与居中情况）。生成用的端点
-与 Key 放在 `design/.env`，该文件被 `.gitignore` 覆盖，不会进仓库。
-
-Anthropic / OpenAI 双协议 API 中转网关 + 管理控制台。带 SQLite 落库、Key 生命周期管理、
-上游凭证加密存储、请求日志与用量统计。单进程（Next.js 15 App Router + Node.js 内置
-`node:sqlite`），无需外部数据库、无需 Docker。
+**能力速览**（逐条说明见「功能特性」表）：
 
 - 客户侧（兼容两种 SDK）：`POST /api/v1/messages`（Anthropic）、
   `POST /api/v1/chat/completions`（OpenAI 兼容）、`GET /api/v1/models`
@@ -62,6 +48,58 @@ Anthropic / OpenAI 双协议 API 中转网关 + 管理控制台。带 SQLite 落
 - `stream: true` 时按 SSE 逐块透传，不整体缓冲
 
 > 第一次接触本项目？直接跳到「快速开始」三条命令；只想知道能做什么，看「功能特性」表格。
+
+---
+
+## 截图
+
+两张图都取自本仓库自己跑起来的控制台：数据由 `scripts\test-api.ps1` 的本地桩上游产生
+（`127.0.0.1` 上的随机端口、暗色主题）。点击图片可查看原始分辨率（3055×1622 / 3061×1625）。
+
+<p align="center">
+  <a href="public/screenshot-01.png"><img src="public/screenshot-01.png" width="100%"
+    alt="AragonRouter 控制台概览页：请求数 / 错误率 / 平均延迟 / Token 用量卡片、用量折线与最近转发记录" /></a>
+</p>
+
+<p align="center">
+  <sub><b>概览</b> <code>/console</code> —— 请求数、错误率、平均延迟、Token 用量四张卡片，
+  按 <code>24h</code> / <code>7d</code> / <code>30d</code> 切换的用量折线，下方是最近 6 条转发记录
+  （时间 / 模型 / 延迟 / Token / Key 前缀）与 <b>View all logs</b> 入口</sub>
+</p>
+
+<p align="center">
+  <a href="public/screenshot-02.png"><img src="public/screenshot-02.png" width="100%"
+    alt="AragonRouter 控制台 Provider 页：上游列表、协议、BaseURL、脱敏 Key、启用开关、健康状态与 Test / Edit / Delete" /></a>
+</p>
+
+<p align="center">
+  <sub><b>Provider</b> <code>/console/providers</code> —— 每个上游的协议、BaseURL、脱敏后的 Key
+  （<code>192d….aqjT</code> 这种形态，明文在入库前已加密）、启用开关、健康状态，以及逐行的
+  <b>Test</b> / <b>Edit</b> / <b>Delete</b>；顶部一行说明「同一协议有多个上游时，最早启用的那个承接流量」</sub>
+</p>
+
+> 截图维护：控制台 UI 有改动时，用同一套桩上游数据重截概览页与 Provider 页，覆盖
+> `public/screenshot-01.png` / `public/screenshot-02.png`，保持暗色主题与相近分辨率即可。
+
+---
+
+## 目录
+
+| 章节 | 内容 |
+| --- | --- |
+| [截图](#截图) | 控制台概览页与 Provider 页 |
+| [快速开始](#快速开始) | 三条命令：启动 → 打开控制台 → 关闭 |
+| [功能特性](#功能特性) | 能力清单与实现状态 |
+| [1. 架构](#1-架构) | 一次转发在网关里经过哪几层 |
+| [2. 目录结构](#2-目录结构) | 每个目录放什么、运行期产物落在哪 |
+| [3. 环境要求](#3-环境要求) | Node.js >= 22.5、PowerShell |
+| [4. 环境变量](#4-环境变量) | 必填与可选变量、口令强度要求 |
+| [5. 一键启停](#5-一键启停) | 启动 / 停止 / 端到端验证 / 单元与集成测试 |
+| [6. API 与 curl 示例](#6-api-与-curl-示例) | 管理侧与客户侧可直接粘贴的调用 |
+| [7. 故障排查](#7-故障排查) | 报错原文 → 原因与处理 |
+| [8. 安全说明](#8-安全说明) | 凭证、会话与请求上限 |
+| [9. 品牌资源与图标流水线](#9-品牌资源与图标流水线) | 图标母版怎么打分、三档产物怎么生成 |
+| [10. 已知限制](#10-已知限制) | 明确不做、自动化覆盖不到的部分 |
 
 ---
 
@@ -123,7 +161,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\stop-dev.ps1
 | 用量统计 | 已实现 | `GET /api/admin/stats?range=24h\|7d\|30d` 聚合请求数与 tokens，`series` 为等宽时间桶可直接画图；控制台「概览」页内联 SVG 折线 |
 | 一键启停脚本 | 已实现 | `scripts\start-dev.ps1`（自动挑端口、依赖缺失自动装、命名互斥量防并发、就绪后复查端口归属）与 `scripts\stop-dev.ps1`（按 PID 结束进程树、只杀**能证明属于本仓库**的进程），幂等可重复执行 |
 | 离线端到端测试 | 已实现 | `scripts\test-api.ps1` 自带本地桩上游（`tests/integration/stub-upstream.mjs`），无网络也能跑通「401 → 登录 → 建 Key → 建 Provider → 非流式 → SSE → OpenAI → models → 坏 key → 凭证注入/剥离 → 日志 → 统计 → 停机」并逐条打印 `PASS`/`FAIL` |
-| 管理控制台 | 已实现 | 暗色优先 UI（`/console`）：概览、Key、Provider（含「Test」连通性按钮）、日志、设置；会话为 HMAC 签名 Cookie，失败登录限流 |
+| 管理控制台 | 已实现 | 暗色优先 UI（`/console`）：概览、Key、Provider（含「Test」连通性按钮）、日志、设置；会话为 HMAC 签名 Cookie，失败登录限流。长相见[截图](#截图) |
 
 ---
 
@@ -185,7 +223,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\stop-dev.ps1
 │   └── lib/                                    db / env / crypto / auth / apikeys /
 │                                               providers / upstream / proxy / logs / stats
 ├── public/
-│   └── brand-mark.png                          512×512 品牌母版（页面内使用）
+│   ├── brand-mark.png                          512×512 品牌母版（页面内使用）
+│   ├── screenshot-01.png                       README 截图：概览页（/console）
+│   └── screenshot-02.png                       README 截图：Provider 页（/console/providers）
 ├── design/                                     图标美术资产与可复现流水线
 │   ├── ai/                                     AI 生成的候选母版（qwen-image-3.0-pro，1328×1328）
 │   ├── ai-logo.py                              生成候选（提示词按 motif 拆分，负面词统一）
@@ -620,7 +660,38 @@ HTTP/1.1 401 Unauthorized
 
 ---
 
-## 已知限制
+## 9. 品牌资源与图标流水线
+
+头部的图标（`public/brand-mark.png` 与两档 favicon）是 AI 生成后用
+`design/build-brand-assets.py` 规整的位图：脚本把画面投影到 C10 双色
+（`#121212` 底板 + `#3ecf8e` 品牌绿）再逐级下采样，因此图标里的绿与控制台的强调色是同一个
+色值。母版来自阿里云 MaaS 的 `qwen-image-3.0-pro`（见 `design/ai-logo.py`），一次生成多个
+构图方向后用 `design/score-logos.py` 按覆盖率、形状完整度、对称性、居中与留白客观打分，
+再把胜出的那张规整成图标。同一份母版派生出三处产物，全部走 Next.js App Router 的文件约定，
+不依赖外链图片：
+
+| 文件 | 尺寸 | 用途 | Next 注入的标签 |
+| --- | --- | --- | --- |
+| `public/brand-mark.png` | 512×512 | 页面内品牌标识（`BrandMark`） | —（普通 `<img>`） |
+| `src/app/icon.png` | 256×256 | 浏览器标签页 favicon | `<link rel="icon" type="image/png">` |
+| `src/app/apple-icon.png` | 180×180 | iOS 主屏图标 | `<link rel="apple-touch-icon" sizes="180x180">` |
+
+重新生成整套图标（换一版美术只需换 `--source`）：
+
+```bash
+python design/ai-logo.py --all                                   # 生成候选（需 design/.env）
+python design/score-logos.py design/ai/*.png                     # 客观打分排序
+python design/contact-sheet.py                                   # 拼对比图 design/logo-candidates.png
+python design/build-brand-assets.py --source design/ai/<选中>.png  # 规整成三档图标
+```
+
+`design/` 下保留 AI 生成的原始母版（`design/ai/`，1328×1328）、打分脚本、对比图生成器与
+像素自检脚本 `design/inspect-logo.py`（检查出血、主色板、包围盒与居中情况）。生成用的端点
+与 Key 放在 `design/.env`，该文件被 `.gitignore` 覆盖，不会进仓库。
+
+---
+
+## 10. 已知限制
 
 诚实划界：下面是当前实现**明确不做**或**覆盖不到**的部分。按现状规划使用方式，不要指望它们。
 
