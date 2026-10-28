@@ -77,8 +77,10 @@ const ENV_ROWS: readonly EnvRow[] = [
   },
   {
     name: 'SESSION_SECRET',
-    required: true,
-    description: 'HMAC-SHA256 key that signs the session cookie. At least 32 characters.',
+    required: false,
+    description:
+      'Legacy, currently unused: sessions are user_sessions rows, not HMAC-signed ' +
+      'cookies. Harmless to keep, harmless to drop.',
     display: 'hidden',
   },
   {
@@ -380,13 +382,16 @@ export function SettingsPanel(): ReactNode {
             </div>
             <div className="flex items-center justify-between gap-3">
               <dt className="text-muted">Lifetime</dt>
-              <dd className="text-text">{SESSION_TTL_DAYS} days, signed with HMAC-SHA256</dd>
+              <dd className="text-right text-text">
+                {SESSION_TTL_DAYS} days, opaque <code className="mono">&lt;sessionId&gt;.&lt;secret&gt;</code>{' '}
+                token; only its sha256 is stored
+              </dd>
             </div>
             <div className="flex items-center justify-between gap-3">
-              <dt className="text-muted">Signing key</dt>
+              <dt className="text-muted">Revocation</dt>
               <dd className="text-muted">
                 <span className="inline-flex items-center gap-1">
-                  <Lock size={11} aria-hidden="true" /> SESSION_SECRET (hidden)
+                  <Lock size={11} aria-hidden="true" /> per-device rows in user_sessions
                 </span>
               </dd>
             </div>

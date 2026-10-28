@@ -181,10 +181,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\stop-dev.ps1
 │      │                                                                            │
 │      ├─ 鉴权      src/lib/apikeys.ts    只比较 sha256，库里不存明文               │
 │      ├─ 转发      src/lib/proxy.ts      选 provider → 剥离入站凭证 → 注入上游凭证 │
-│      │                                  → 流式/非流式透传 → 写 request_logs      │
-│      └─ 上游路径  src/lib/upstream.ts   /v1/messages · /v1/chat/completions · /v1/models │
+│      │                                  → 流式/非流式透传 → 写 request_logs       │
+│      └─ 上游路径  src/lib/upstream.ts   /v1/messages · /v1/chat/completions       │
+│                                          · /v1/models                             │
 │                                                                                   │
-│  管理侧路由  /api/admin/**  →  HMAC 签名 Cookie 会话（src/lib/auth.ts）           │
+│  管理侧路由  /api/admin/**  →  数据库行会话（src/lib/sessions.ts）                │
+│    Cookie 值为不透明 <sessionId>.<secret>，库里只存 sha256，可按设备吊销          │
 │  数据层      src/lib/db.ts  →  node:sqlite（内联幂等 DDL）                        │
 │  凭证加密    src/lib/crypto.ts → AES-256-GCM，控制台只回 maskedKey                │
 │  观测        src/lib/logs.ts / stats.ts → 日志分页 + 用量聚合                     │
@@ -319,7 +321,7 @@ npm install
 | 变量 | 必填 | 说明 |
 | --- | --- | --- |
 | `ADMIN_PASSWORD` | 是 | 控制台登录口令。脚本要求 **≥ 12 个字符**，不得含 `"` `#` `'` `=` 或首尾空白；首个脚本运行会随机生成 24 位并打印 |
-| `SESSION_SECRET` | 是 | 会话 Cookie 的 HMAC-SHA256 密钥，至少 32 个字符 |
+| `SESSION_SECRET` | 否 | **遗留项，当前对会话无作用**：会话是 `user_sessions` 行（Cookie 值 `<sessionId>.<secret>`，库里只存 `sha256(secret)`），不再做 HMAC 签名。只保留给旧 `.env.local` 与脚本兼容，留空不影响登录；若填写仍需 ≥ 32 个字符 |
 | `ENCRYPTION_KEY` | 是 | 上游凭证的 AES-256-GCM 密钥，恰好 64 位十六进制（32 字节） |
 | `DATABASE_PATH` | 否 | SQLite 路径，默认 `./data/aragon.db`（相对仓库根目录，`data/` 自动创建） |
 | `MAX_REQUEST_BODY_BYTES` | 否 | 入站请求体上限，默认 32 MiB，超出返回 413 |
@@ -825,7 +827,7 @@ curl -b admin-cookies.txt -X PATCH http://127.0.0.1:3001/api/admin/settings ^
 | 登录返回 `400 password is required` / `401 invalid password` | 口令与 `.env.local` 里存的不一致，或该口令不满足强度要求（< 12 字符 / 含 `#` `"` 等）。删掉 `.env.local` 后重新运行 `scripts\start-dev.ps1`，用横幅里打印的新口令登录；连续失败会触发限流，等一分钟再试 |
 | 口令正确却一直 `401`，且脚本提示「这个实例不接受当前 .env.local 里的 ADMIN_PASSWORD」 | 跑着的 dev server 是用旧环境启动的：从测试运行器 / CI 继承的 `NODE_ENV=test` 会让 Next.js **跳过 `.env.local`**（`@next/env` 在 test 环境不加载该文件），管理口令因此为空或为旧值。`scripts\start-dev.ps1` 现在会清掉继承的 `NODE_ENV` 与 `ADMIN_PASSWORD`/`SESSION_SECRET`/`ENCRYPTION_KEY`/`DATABASE_PATH` 并打印「已忽略从父进程继承的变量」，按提示 `stop-dev.ps1` 后重启即可 |
 | 登录后接口仍 `401 unauthorized` | Cookie 未带上：确认用 `-b cookies.txt` 或浏览器已登录；`COOKIE_SECURE=1` 时纯 HTTP 访问不会生效 |
-| `SESSION_SECRET is not set` / `must be at least 32 characters` | 在 `.env.local` 中补齐 32+ 字符密钥，重启服务 |
+| `SESSION_SECRET is not set` / `must be at least 32 characters` | 只有遗留校验器 `getSessionSecret()` 会抛这个错（已无生产调用方：会话是 `user_sessions` 行，不再签名）。补齐 32+ 字符即可，或直接忽略该变量 |
 | `ENCRYPTION_KEY must be exactly 64 hex characters` | 换成 64 位十六进制；注意全零样例等于没有加密 |
 | 转发 `503 no enabled <protocol> provider is configured` | 去 `/console/providers` 新建并启用对应协议的 provider |
 | 转发 `500 provider "x" cannot be used: …` | 更换过 `ENCRYPTION_KEY`，旧密文无法解密：在控制台重新保存该 provider 的上游 Key |
@@ -843,8 +845,12 @@ curl -b admin-cookies.txt -X PATCH http://127.0.0.1:3001/api/admin/settings ^
 - 上游凭证以 AES-256-GCM 加密存 SQLite，接口只返回 `maskedKey`（如 `sk-a…a1b2`）；
 - 入站凭证（`authorization`、`x-api-key`、`cookie`）在下发上游前被剥离，上游错误体
   回传前按已知密钥脱敏，避免运维凭证泄漏给低权限客户端；
-- 会话为无状态 HMAC 签名 Cookie（`HttpOnly`、`SameSite=Lax`，7 天有效），口令比较使用
-  常量时间比较，并对失败登录做限流；
+- 会话是**数据库行会话**（`user_sessions`，`src/lib/sessions.ts`）：Cookie `aragon_session`
+  的值是不透明 `<sessionId>.<secret>`，库里只保存 `sha256(secret)`，因此拿到 SQLite 文件也无法
+  重放成本次登录；Cookie 带 `HttpOnly`、`SameSite=Lax`、`Path=/`，TTL 7 天，`COOKIE_SECURE=1`
+  时再加 `Secure`。口令用常量时间比较，失败登录按 IP 指纹限流，改密或吊销后旧会话立即失效
+  （按设备吊销就是给对应的 `user_sessions` 行写 `revoked_at`）；`SESSION_SECRET` 不再参与
+  会话，属遗留配置项；
 - 请求体与缓冲响应都有硬上限，防止单个低权限 Key 或恶意上游耗尽内存；
 - `.env.local`、`data/`、`.dev-logs/` 与运行期 PID/端口文件均在 `.gitignore` 中。
 
@@ -895,7 +901,9 @@ python design/build-brand-assets.py --source design/ai/<选中>.png  # 规整成
 
 ### 运行时与产品边界
 
-- **单管理员**：只有一份 `ADMIN_PASSWORD` 会话，没有多用户、角色或权限分级；操作记录也不区分操作人；
+- **单租户、无操作人审计**：账号体系是单实例单租户；`request_logs` 不记录操作人（没有审计
+  日志）；API Key 不与账号绑定，任何有效 `ar-` Key 都等价于该实例的匿名客户端；`ADMIN_PASSWORD`
+  只在 `users` 表还没有 admin 行时生效，此后以库内记录为准（改它不会改口令）；
 - **不做协议互转**：provider 行上的 `protocol` 决定上游路径，OpenAI 形状的请求不会被翻译成 Anthropic 形状（反之亦然），也没有模型名映射/别名；
 - **单机单进程**：数据层是 `node:sqlite` 本地单文件（WAL），启停互斥量是按仓库路径派生的 Windows 命名 Mutex，因此不支持多机/多实例共享同一份数据，也不适合水平扩展；
 - **无 Mock 模式**：没有可用 provider 时转发直接返回结构化错误 JSON，不会伪造成功响应；
