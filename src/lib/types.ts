@@ -93,6 +93,77 @@ export interface DataEnvelope<T> {
   data: T;
 }
 
+/** C-DTO: role of a database-backed account. */
+export type UserRole = 'admin' | 'member';
+
+/** C-DTO: only `active` accounts may authenticate. */
+export type UserStatus = 'active' | 'disabled';
+
+export const USER_ROLES: readonly UserRole[] = ['admin', 'member'] as const;
+export const USER_STATUSES: readonly UserStatus[] = ['active', 'disabled'] as const;
+
+/** C-SCHEMA: `settings.registration_enabled`, a missing row means "open". */
+export const REGISTRATION_ENABLED_KEY = 'registration_enabled';
+
+/** C-DTO: every user field the API may expose. Never the password hash. */
+export interface UserPublic {
+  id: string;
+  username: string;
+  displayName: string | null;
+  role: UserRole;
+  status: UserStatus;
+  createdAt: string;
+  updatedAt: string;
+  lastLoginAt: string | null;
+}
+
+/** C-DTO: one device/session as shown in the console. */
+export interface UserSessionPublic {
+  id: string;
+  createdAt: string;
+  lastSeenAt: string;
+  expiresAt: string;
+  userAgent: string | null;
+  ip: string | null;
+  current: boolean;
+}
+
+/** C-DTO: user plus the sessions the console lists on the detail page. */
+export interface UserDetailPublic extends UserPublic {
+  sessions: UserSessionPublic[];
+}
+
+/** C-GUARD: the authenticated actor a route handler receives. */
+export interface AuthContext {
+  session: {
+    id: string;
+    userId: string;
+    createdAt: string;
+    lastSeenAt: string;
+    expiresAt: string;
+    userAgent: string | null;
+    ip: string | null;
+  };
+  user: {
+    id: string;
+    username: string;
+    role: UserRole;
+    status: UserStatus;
+  };
+}
+
+/** C-CAPTCHA: what `GET /api/auth/captcha` returns. */
+export interface CaptchaChallengePublic {
+  challengeId: string;
+  imageDataUrl: string;
+  expiresAt: string;
+}
+
+/** C-DTO: `registration_enabled` as the UI consumes it. */
+export interface RegistrationSetting {
+  enabled: boolean;
+}
+
 /** C4: failure envelope. */
 export interface ErrorEnvelope {
   error: { message: string };

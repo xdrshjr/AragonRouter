@@ -1,5 +1,12 @@
-import { SESSION_COOKIE, createSessionToken } from '@/lib/auth';
 import { resetDbForTests } from '@/lib/db';
+import { SESSION_COOKIE, createSession } from '@/lib/sessions';
+import {
+  createUser,
+  ensureBootstrapAdmin,
+  findUserByUsername,
+  type CreateUserInput,
+} from '@/lib/users';
+import type { UserPublic } from '@/lib/types';
 
 /**
  * Shared fixtures for the unit suite.
@@ -10,6 +17,8 @@ import { resetDbForTests } from '@/lib/db';
 export const TEST_ENCRYPTION_KEY = '0123456789abcdef'.repeat(4);
 export const TEST_SESSION_SECRET = 'unit-test-session-secret-0123456789abcdef';
 export const TEST_ADMIN_PASSWORD = 'unit-test-admin-password';
+/** Valid against the password policy and independent of the admin username. */
+export const TEST_MEMBER_PASSWORD = 'Unit-Test-Passw0rd';
 export const UPSTREAM_ANTHROPIC_KEY = 'sk-ant-upstream-secret-value';
 export const UPSTREAM_OPENAI_KEY = 'sk-openai-upstream-secret-value';
 
@@ -23,9 +32,58 @@ export function prepareTestEnv(): void {
   resetDbForTests();
 }
 
-/** Headers carrying a valid admin session cookie. */
+/**
+ * The bootstrap admin row, created on demand.
+ *
+ * Sessions are database rows now, so every admin fixture needs a real user to
+ * hang the session on; `ensureBootstrapAdmin` is the same code path the server
+ * runs on its first boot.
+ */
+export function bootstrapAdmin(): { id: string; username: string; role: string } {
+  const admin = ensureBootstrapAdmin();
+  return { id: admin.id, username: admin.username, role: admin.role };
+}
+
+/**
+ * Headers carrying a real admin session cookie.
+ *
+ * This is the replacement for the old stateless HMAC fixture: the token is a
+ * `<sessionId>.<secret>` pair backed by a `user_sessions` row, so any test that
+ * exercises `withAdmin` runs through the production authentication path.
+ */
 export function adminHeaders(): Record<string, string> {
-  return { cookie: `${SESSION_COOKIE}=${createSessionToken()}` };
+  const admin = bootstrapAdmin();
+  const session = createSession(admin.id, { userAgent: 'vitest-admin' });
+  return { cookie: `${SESSION_COOKIE}=${session.token}` };
+}
+
+/** Create (or reuse) a non-admin account for role tests. */
+export function createMemberUser(
+  username = 'member-1',
+  overrides: Partial<CreateUserInput> = {},
+): UserPublic {
+  const existing = findUserByUsername(username);
+  if (existing) return existing;
+  return createUser({
+    username,
+    password: TEST_MEMBER_PASSWORD,
+    role: 'member',
+    displayName: 'Test Member',
+    ...overrides,
+  });
+}
+
+/** Mint a session cookie header for any user id (admin or member). */
+export function sessionHeadersFor(userId: string, userAgent = 'vitest'): Record<string, string> {
+  const session = createSession(userId, { userAgent });
+  return { cookie: `${SESSION_COOKIE}=${session.token}` };
+}
+
+/** Headers for a signed-in member; creates the account when it does not exist. */
+export function memberHeaders(
+  user: Pick<UserPublic, 'id'> = createMemberUser(),
+): Record<string, string> {
+  return sessionHeadersFor(user.id, 'vitest-member');
 }
 
 export interface JsonRequestInit {

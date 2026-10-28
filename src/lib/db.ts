@@ -39,8 +39,10 @@ export class SqliteUnavailableError extends Error {
  * minimum supported Node.js version.
  */
 export const NODE_SQLITE_HINT =
-  'node:sqlite is unavailable in this Node.js runtime. AragonRouter requires Node >= 22.5 (check `node --version`). ' +
-  'Upgrade Node.js to 22.5 or newer (the sqlite module ships built in), or start Node with --experimental-sqlite on 22.5+ builds that still gate it.';
+  'node:sqlite is unavailable in this Node.js runtime. AragonRouter requires Node >= 22.5 ' +
+  '(check `node --version`). Upgrade Node.js to 22.5 or newer ' +
+  '(the sqlite module ships built in), ' +
+  'or start Node with --experimental-sqlite on 22.5+ builds that still gate it.';
 
 /**
  * Inline schema (C12). Deliberately a string and not a `.sql` file: Next.js server
@@ -86,12 +88,55 @@ CREATE TABLE IF NOT EXISTS request_logs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_request_logs_created_at ON request_logs (created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_request_logs_api_key_id ON request_logs (api_key_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_request_logs_api_key_id
+  ON request_logs (api_key_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS users (
+  id TEXT PRIMARY KEY,
+  username TEXT NOT NULL,
+  username_lower TEXT NOT NULL UNIQUE,
+  display_name TEXT,
+  password_hash TEXT NOT NULL,
+  role TEXT NOT NULL CHECK (role IN ('admin', 'member')),
+  status TEXT NOT NULL CHECK (status IN ('active', 'disabled')),
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  last_login_at INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_users_created_at ON users (created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_users_role_status ON users (role, status);
+
+CREATE TABLE IF NOT EXISTS user_sessions (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+  token_hash TEXT NOT NULL UNIQUE,
+  created_at INTEGER NOT NULL,
+  last_seen_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,
+  revoked_at INTEGER,
+  user_agent TEXT,
+  ip TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_sessions_user_id ON user_sessions (user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_user_sessions_expires_at ON user_sessions (expires_at);
+
+CREATE TABLE IF NOT EXISTS captcha_challenges (
+  id TEXT PRIMARY KEY,
+  answer_hash TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  consumed_at INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_captcha_challenges_expires_at ON captcha_challenges (expires_at);
 `.trim();
 
 /**

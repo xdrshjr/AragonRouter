@@ -1,114 +1,168 @@
-import { hmacSha256Hex, timingSafeEqualString } from '@/lib/crypto';
-import { getAdminPassword, getSessionSecret, isCookieSecureEnabled } from '@/lib/env';
-
-/** Cookie name shared by the console (C3). */
-export const SESSION_COOKIE = 'aragon_session';
-
-/** Sessions live for seven days. */
-export const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-export const SESSION_TTL_SECONDS = Math.floor(SESSION_TTL_MS / 1000);
+import { getAdminPassword, isCookieSecureEnabled } from '@/lib/env';
+import { timingSafeEqualString } from '@/lib/crypto';
+import { queryOne } from '@/lib/db';
+import {
+  SESSION_COOKIE,
+  SESSION_TTL_MS,
+  SESSION_TTL_SECONDS,
+  authenticateRequest,
+  authenticateSessionToken,
+  createSession,
+  revokeSession,
+  type CreatedSession,
+} from '@/lib/sessions';
+import { ensureBootstrapAdmin } from '@/lib/users';
+import { verifyPassword } from '@/lib/password';
+import type { AuthContext } from '@/lib/types';
 
 /**
- * Compare the submitted password with `ADMIN_PASSWORD` in constant time.
- * Never throws on a missing configuration: an unconfigured server must not accept logins.
+ * Authentication surface (C-TOKEN, C-GUARD).
+ *
+ * The implementation moved from stateless HMAC cookies to database sessions, but
+ * **every export name and signature below is unchanged** so that the existing
+ * route handlers, the PowerShell scripts and the legacy test suite keep working:
+ *
+ *  - `serializeSessionCookie` / `serializeClearedSessionCookie` / `parseCookies` /
+ *    `getSessionTokenFromRequest` / `isSecureRequest` - cookie plumbing;
+ *  - `verifyAdminPassword` - the `admin` row's stored hash, falling back to
+ *    `ADMIN_PASSWORD` only while that row does not exist yet;
+ *  - `createSessionToken` / `verifySessionToken` - session mint/probe;
+ *  - `isAdminRequest` / `requireAdmin` - the boolean guards.
+ */
+
+export { SESSION_COOKIE, SESSION_TTL_MS, SESSION_TTL_SECONDS };
+export { parseCookies, getSessionTokenFromRequest } from '@/lib/sessions';
+
+/**
+ * Compare the submitted password with the stored credential of the bootstrap
+ * `admin` account.
+ *
+ * The row is authoritative as soon as it exists: rotating `ADMIN_PASSWORD` in the
+ * environment or resetting the password through the account store must actually
+ * retire the previous credential, otherwise a leaked password would survive every
+ * documented remediation. `ADMIN_PASSWORD` is therefore only consulted while no
+ * `admin` row exists yet (first boot, before the credential has been hashed).
+ *
+ * The account **status** is part of the credential check: a disabled `admin` row
+ * refuses every candidate, so no caller of this legacy helper can mint a session for
+ * an account that an operator has switched off.
+ *
+ * Never throws: an unconfigured or unreachable server must not accept logins.
  */
 export function verifyAdminPassword(candidate: unknown): boolean {
   if (typeof candidate !== 'string' || candidate.length === 0) return false;
-  let expected: string;
+
+  let storedHash: string | null = null;
+  let adminStatus: string | null = null;
+  let hasAdminRow = false;
   try {
-    expected = getAdminPassword();
+    const row = queryOne<{ password_hash: string; status: string }>(
+      'SELECT password_hash, status FROM users WHERE username_lower = ?',
+      ['admin'],
+    );
+    if (row) {
+      hasAdminRow = true;
+      storedHash = String(row.password_hash);
+      adminStatus = String(row.status);
+    }
+  } catch {
+    // Unreachable database (missing node:sqlite, no schema yet): no row is known,
+    // so the environment credential - the only one that can exist then - decides.
+    hasAdminRow = false;
+  }
+
+  if (hasAdminRow) {
+    if (adminStatus !== 'active') return false;
+    return verifyPassword(candidate, storedHash);
+  }
+
+  try {
+    return timingSafeEqualString(candidate, getAdminPassword());
   } catch {
     return false;
   }
-  return timingSafeEqualString(candidate, expected);
 }
 
 /**
- * Build a stateless session token: `<expiresAtMs>.<hmacHex>`.
- * The HMAC covers the expiry timestamp only, so tampering with it invalidates the token.
+ * Mint a session for the bootstrap admin and return the cookie value.
+ *
+ * Kept as a compatibility shell for the test fixtures and the console gate:
+ * the returned token has the C-TOKEN shape `<32hex sessionId>.<64hex secret>`
+ * and is a real database session.
+ *
+ * The `secret` parameter is accepted (legacy signature) but ignored - sessions
+ * are no longer signed with `SESSION_SECRET`, they are rows. A session minted for an
+ * account an operator has since disabled is inert: `authenticateRequest` refuses it
+ * (see `authenticateSessionToken`), so this helper cannot bypass a disable.
+ *
+ * @throws ConfigurationError when neither `ADMIN_PASSWORD` nor a bootstrap admin
+ *   row exists: an unconfigured server must not hand out sessions.
  */
 export function createSessionToken(now: number = Date.now(), secret?: string): string {
-  const signingKey = secret ?? getSessionSecret();
-  const expiresAt = now + SESSION_TTL_MS;
-  const payload = String(expiresAt);
-  return `${payload}.${hmacSha256Hex(signingKey, payload)}`;
+  void secret;
+  const admin = ensureBootstrapAdmin(now);
+  const session: CreatedSession = createSession(admin.id, { now });
+  return session.token;
 }
 
-/** Validate signature and expiry of a session token. */
+/**
+ * Validate a session token without a `Request`.
+ *
+ * @returns `true` when the token is a live database session (not expired, not
+ *   revoked, owner active). Role checks belong to {@link isAdminRequest}.
+ */
 export function verifySessionToken(
   token: unknown,
   now: number = Date.now(),
   secret?: string,
 ): boolean {
-  if (typeof token !== 'string') return false;
-  const separator = token.indexOf('.');
-  if (separator <= 0 || separator !== token.lastIndexOf('.')) return false;
-  const payload = token.slice(0, separator);
-  const signature = token.slice(separator + 1);
-  if (!/^\d{1,17}$/.test(payload) || !/^[0-9a-f]{64}$/i.test(signature)) return false;
-
-  let signingKey: string;
+  void secret;
   try {
-    signingKey = secret ?? getSessionSecret();
+    return authenticateSessionToken(token, now) !== null;
   } catch {
     return false;
   }
-  if (!timingSafeEqualString(signature.toLowerCase(), hmacSha256Hex(signingKey, payload))) {
-    return false;
-  }
-  const expiresAt = Number.parseInt(payload, 10);
-  return Number.isFinite(expiresAt) && expiresAt > now;
 }
 
-/** Parse a `Cookie` request header into a plain object. */
-export function parseCookies(header: string | null | undefined): Record<string, string> {
-  const result: Record<string, string> = {};
-  if (!header) return result;
-  for (const part of header.split(';')) {
-    const trimmed = part.trim();
-    if (trimmed.length === 0) continue;
-    const equals = trimmed.indexOf('=');
-    if (equals <= 0) continue;
-    const name = trimmed.slice(0, equals).trim();
-    const rawValue = trimmed.slice(equals + 1).trim();
-    if (name.length === 0) continue;
-    let value = rawValue;
-    if (value.startsWith('"') && value.endsWith('"') && value.length >= 2) {
-      value = value.slice(1, -1);
-    }
-    try {
-      result[name] = decodeURIComponent(value);
-    } catch {
-      result[name] = value;
-    }
+/**
+ * Resolve the request to its actor.
+ * @returns `null` for an absent, malformed, expired or revoked session, or a
+ *   disabled user.
+ */
+export function getAuthContext(request: Request, now: number = Date.now()): AuthContext | null {
+  try {
+    return authenticateRequest(request, now);
+  } catch {
+    return null;
   }
-  return result;
 }
 
-/** Extract the session token from `Cookie` (or `Authorization: Bearer` for scripts). */
-export function getSessionTokenFromRequest(request: Request): string | null {
-  const cookieToken = parseCookies(request.headers.get('cookie'))[SESSION_COOKIE];
-  if (cookieToken) return cookieToken;
-  const authorization = request.headers.get('authorization');
-  if (authorization) {
-    const match = /^Bearer\s+(.+)$/i.exec(authorization.trim());
-    if (match && match[1]) return match[1].trim();
-  }
-  return null;
-}
-
-/** True when the request carries a valid admin session. */
+/** True when the request carries a live session whose user is an active admin. */
 export function isAdminRequest(request: Request, now: number = Date.now()): boolean {
-  try {
-    return verifySessionToken(getSessionTokenFromRequest(request), now);
-  } catch {
-    return false;
-  }
+  const context = getAuthContext(request, now);
+  return context !== null && context.user.role === 'admin' && context.user.status === 'active';
 }
 
 /** Alias kept explicit for route handlers: throws nothing, returns a boolean. */
 export function requireAdmin(request: Request): boolean {
   return isAdminRequest(request);
+}
+
+/**
+ * The actively authenticated actor, or `null`.
+ *
+ * Route helpers use this instead of `isAdminRequest` once they need the user id
+ * (user management, "log out other devices", self-service password change).
+ */
+export function requireSession(request: Request): AuthContext | null {
+  return getAuthContext(request);
+}
+
+/** Revoke the session carried by a request (logout). Returns false when absent. */
+export function endSession(request: Request, now: number = Date.now()): boolean {
+  const context = getAuthContext(request, now);
+  if (!context) return false;
+  return revokeSession(context.session.id, now);
 }
 
 export interface SessionCookieOptions {
@@ -117,8 +171,8 @@ export interface SessionCookieOptions {
 }
 
 /**
- * Serialize the `Set-Cookie` value for a fresh session.
- * Matches C3: `aragon_session=<exp>.<hmacHex>; Path=/; HttpOnly; SameSite=Lax`.
+ * Serialize the `Set-Cookie` value for a fresh session (C-TOKEN):
+ * `aragon_session=<sessionId>.<secret>; Path=/; HttpOnly; SameSite=Lax; Max-Age=...`.
  */
 export function serializeSessionCookie(
   token: string,
@@ -153,4 +207,9 @@ export function isSecureRequest(request: Request): boolean {
   } catch {
     return false;
   }
+}
+
+/** Password-hash verification for the account routes (never logs the input). */
+export function verifyUserPassword(password: unknown, storedHash: unknown): boolean {
+  return verifyPassword(password, storedHash);
 }

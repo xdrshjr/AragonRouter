@@ -53,3 +53,10 @@ __pycache__/
 Thumbs.db
 .idea/
 .vscode/
+
+# local agent tooling artifacts: the codebase indexer and the agent workspace drop
+# these next to the sources. They describe one machine's session, not the product,
+# so they stay out of the tree; `git add -f` if the team ever decides to publish them.
+.agentmesh/
+.claude-index/
+CLAUDE.md
