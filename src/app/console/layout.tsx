@@ -1,34 +1,35 @@
 import type { Metadata } from 'next';
 import { AuthGuard } from '@/components/console/AuthGuard';
+import { AuthProvider } from '@/components/auth/AuthProvider';
 import { ToastProvider } from '@/components/ui/Toast';
-import { requireSession } from '@/components/console/session-gate';
 
 export const metadata: Metadata = {
   title: 'Console',
 };
 
 /**
- * Console shell. Everything under `/console` is client-rendered against the admin
- * API, so the shell only gates the session, mounts the toast host and the guard.
+ * Console shell.
  *
- * The session itself lives in an HttpOnly cookie (C3): the browser cannot read it
- * and the UI therefore never tries. `requireSession` rejects a request that carries
- * no C3-shaped cookie before any markup is produced, and `AuthGuard` then proves
- * the cookie against `GET /api/admin/session` (the API stays the only authority).
+ * Guest first: this layout no longer gates anything. It mounts the toast host, the
+ * authentication provider (one `GET /api/auth/session` probe for the whole shell)
+ * and the guard, which renders the same sidebar/top bar/footer for a guest and only
+ * replaces the panel area with a sign-in mask.
  *
- * The gate runs in the layout rather than in each page so that it completes before
- * the client shell starts streaming - a page-level redirect would be delivered as a
- * soft (in-band) redirect because the layout had already been flushed.
+ * The session itself lives in an HttpOnly cookie: the browser cannot read it, so
+ * the client context is the only identity source and the API remains the only
+ * authority. Because nothing redirects here, `/console` and every sub-page answer
+ * 200 for a visitor without a session - which is exactly the product decision.
  */
-export default async function ConsoleLayout({
+export default function ConsoleLayout({
   children,
 }: {
   children: React.ReactNode;
-}): Promise<React.ReactNode> {
-  await requireSession('/console');
+}): React.ReactNode {
   return (
     <ToastProvider>
-      <AuthGuard>{children}</AuthGuard>
+      <AuthProvider>
+        <AuthGuard>{children}</AuthGuard>
+      </AuthProvider>
     </ToastProvider>
   );
 }

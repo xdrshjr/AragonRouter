@@ -210,10 +210,20 @@ describe('admin routes: C3 session and unauthorized matrix', () => {
     expect(response.status).toBe(200);
     expect(await bodyOf<unknown>(response)).toEqual({ data: { ok: true } });
     const cookie = response.headers.get('set-cookie') ?? '';
-    expect(cookie).toMatch(/aragon_session=\d+\.[0-9a-f]{64}/);
+    expect(cookie).toMatch(/aragon_session=[0-9a-f]{32}\.[0-9a-f]{64}/);
     expect(cookie).toContain('HttpOnly');
     expect(cookie).toContain('SameSite=Lax');
     expect(cookie).toContain('Path=/');
+
+    // The minted cookie is a real database session (C-TOKEN): the guard accepts it,
+    // so login and `withAdmin` agree on one credential format.
+    const probe = await sessionRoute.GET(
+      jsonRequest(`${BASE}/api/admin/session`, {
+        method: 'GET',
+        headers: { cookie: cookie.split(';')[0] ?? '' },
+      }),
+    );
+    expect(probe.status).toBe(200);
   });
 
   it('rejects a wrong password with 401 {error:{message}}', async () => {

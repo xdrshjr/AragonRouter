@@ -143,26 +143,29 @@ describe('OverviewPanel first paint', () => {
   });
 });
 
-describe('LoginForm', () => {
-  it('binds the label to the password field and prefills nothing', () => {
+describe('LoginForm (/login fallback)', () => {
+  it('renders the shared form: username, password and captcha, prefilled with nothing', () => {
     const markup = render(<LoginForm nextPath="/console" />);
+    expect(markup).toContain('name="username"');
     expect(markup).toContain('type="password"');
     expect(markup).toContain('name="password"');
-    expect(markup).toContain('Sign in');
+    expect(markup).toContain('name="captchaAnswer"');
     expect(markup).toContain('autoComplete="current-password"');
-    const labelFor = /<label for="([^"]+)"[^>]*>Admin password/.exec(markup);
+    expect(markup).toContain('Sign in');
+    const labelFor = /<label for="([^"]+)"[^>]*>Password/.exec(markup);
     expect(labelFor?.[1]).toBeDefined();
     expect(markup).toContain(`id="${labelFor?.[1]}"`);
-    // Server-rendered markup must never carry a value attribute for the password.
+    // Server-rendered markup must never carry a value attribute for a secret.
     expect(markup).not.toMatch(/name="password"[^>]*value="[^"]+"/);
+    expect(markup).not.toMatch(/name="captchaAnswer"[^>]*value="[^"]+"/);
   });
 
-  it('does not mark the field invalid until a failure happens', () => {
+  it('offers the same two tabs as the dialog and marks nothing invalid yet', () => {
     const markup = render(<LoginForm nextPath="/console" />);
+    expect(markup).toContain('role="tablist"');
+    expect(markup).toContain('Create account');
     expect(markup).not.toContain('aria-invalid="true"');
-    // With neither a hint nor an error there is nothing to describe yet; the error
-    // paragraph (Field) adds `aria-describedby` when it appears.
-    expect(markup).not.toContain('aria-describedby');
+    expect(markup).not.toContain('role="alert"');
   });
 });
 

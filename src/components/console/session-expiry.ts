@@ -11,11 +11,16 @@
  *
  * So the signal is raised exactly where the status is observed - inside
  * `api.ts`'s single request choke point - and the console shell (`AuthGuard`)
- * subscribes once. Any admin call, whatever the caller does with the returned
- * error afterwards, therefore ends on `/login?next=<path>`:
+ * subscribes once:
  *
  *   `adminRequest` sees 401 -> `notifySessionExpired()` -> subscribed handler ->
- *   `router.replace(buildLoginRedirect(pathname))`
+ *   back to the guest view + `openLogin('login', "your session expired")`
+ *
+ * **No navigation happens.** The console is guest first: the shell stays, the
+ * panel area is replaced by the mask, and the sign-in dialog opens over the page
+ * the operator was working on. Only the `/api/admin/**` surface raises this
+ * signal; a 401 from `/api/auth/**` is a wrong credential and stays inline in the
+ * form.
  *
  * The channel carries no payload: it only says "the session is gone", so nothing
  * sensitive (cookie, password, upstream key) can travel through it.

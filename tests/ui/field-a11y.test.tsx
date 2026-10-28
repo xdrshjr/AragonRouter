@@ -1,9 +1,9 @@
 /**
  * Regression tests for REQUIRED CHANGE #2 of the console-ui rework.
  *
- * Defect: `LoginForm`'s docblock promised that a wrong password is "announced with
- * role=\"alert\"", but the message was rendered by `ui/Input`'s `Field` as a plain
- * `<p id=...-error>` - it only reached assistive technology through
+ * Defect: the login form's docblock promised that a wrong password is "announced
+ * with role=\"alert\"", but the message was rendered by `ui/Input`'s `Field` as a
+ * plain `<p id=...-error>` - it only reached assistive technology through
  * `aria-describedby` when focus returned to the field. The promise and the
  * implementation disagreed.
  *
@@ -11,10 +11,12 @@
  * region (`role="alert"`), keeps the `id`/`aria-describedby` binding, and only
  * renders it while there is an error (so nothing is announced on first paint).
  *
- * The rendered assertions below use `react-dom/server` (no DOM is available and the
- * work package may not add jsdom/testing-library); the interaction that creates the
- * error state is covered by the `Field` contract itself, which is what LoginForm
- * consumes.
+ * The form moved on since (username + password + captcha, shared by the dialog and
+ * `/login`) but the contract did not: every field-level failure still reaches the
+ * announced live region through `Field`. The rendered assertions below use
+ * `react-dom/server` (no DOM is available and the work package may not add
+ * jsdom/testing-library); the interaction that creates the error state is covered
+ * by the `Field` contract itself, which is what the form consumes.
  */
 
 import { readFileSync } from 'node:fs';
@@ -37,12 +39,12 @@ function read(relative: string): string {
   return readFileSync(join(SRC, relative), 'utf8');
 }
 
-const WRONG_PASSWORD = 'That password is not correct. Try again.';
+const WRONG_PASSWORD = 'That username and password combination was not recognised.';
 
-/** The exact composition LoginForm uses for its password field. */
+/** The exact composition the shared form uses for its password field. */
 function passwordField(error: string | null): string {
   return renderToStaticMarkup(
-    <Field label="Admin password" error={error} required>
+    <Field label="Password" error={error} required>
       {({ id, describedBy }) => (
         <Input
           id={id}
@@ -95,14 +97,24 @@ describe('Field error is a real live region', () => {
     expect(markup).not.toContain('role="alert"');
   });
 
-  it('the docblock no longer promises behaviour the kit does not implement', () => {
-    const form = read('app/login/LoginForm.tsx');
-    // The claim is now backed by the primitive, so the comment may keep it - but it
-    // must say *where* the announcement comes from (`Field`).
-    expect(form).toContain('`Field` renders that message as a `role="alert"` live region');
-    // The binding LoginForm relies on is still asserted here.
-    expect(form).toMatch(/<Field label="Admin password" error=\{error\}/);
-    expect(form).toContain('invalid={error !== null}');
+  it('the shared form binds every message to its field through the kit', () => {
+    const form = read('components/auth/AuthForm.tsx');
+    // Field-level failures: bound to the control via the Field render prop...
+    expect(form).toMatch(/<Field label=\{USERNAME_LABEL\} error=\{errors\.username\}/);
+    expect(form).toMatch(/<Field\s+label=\{PASSWORD_LABEL\}\s+error=\{errors\.password\}/);
+    expect(form).toContain('invalid={errors.username !== null}');
+    expect(form).toContain('invalid={errors.password !== null}');
+    expect(form).toContain('aria-describedby={describedBy}');
+    // ...and a form-level failure is an announced live region of its own.
+    expect(form).toContain('role="alert"');
+    expect(form).toContain('{errors.form}');
+  });
+
+  it('the captcha field reports its own failure the same way', () => {
+    const field = read('components/auth/CaptchaField.tsx');
+    expect(field).toContain('<Field label={CAPTCHA_LABEL} error={message}');
+    expect(field).toContain('aria-describedby={describedBy}');
+    expect(field).toContain('invalid={message !== null}');
   });
 
   it('every other failure paragraph in the kit is announced too', () => {

@@ -3,8 +3,10 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { BrandMark } from '@/components/brand/BrandMark';
+import { Badge } from '@/components/ui/Badge';
 import { cn } from '@/components/ui/cn';
-import { NAV_ITEMS, isActivePath } from '@/components/console/nav';
+import { useAuth } from '@/components/auth/auth-context';
+import { visibleNavItems, isActivePath } from '@/components/console/nav';
 
 export interface SidebarProps {
   /** Rendered inside the mobile drawer: selecting a link must close it. */
@@ -14,9 +16,17 @@ export interface SidebarProps {
 /**
  * Fixed navigation rail (Supabase-style: product mark on top, one flat list of
  * sections, muted labels, brand-tinted active row).
+ *
+ * Which entries exist is decided by `visibleNavItems(isAdmin)` from the auth
+ * context (C-AUTH-CONTEXT), never by a fetch of its own: a guest and a `member`
+ * cannot use `adminOnly` sections, so those links are absent instead of dead. An
+ * admin sees them with a small "Admin" marker so the scope of the page is obvious
+ * before clicking it.
  */
 export function Sidebar({ onNavigate }: SidebarProps): React.ReactNode {
   const pathname = usePathname();
+  const auth = useAuth();
+  const items = visibleNavItems(auth.isAdmin);
 
   return (
     <nav aria-label="Console sections" className="flex h-full flex-col gap-6 px-3 py-4">
@@ -40,7 +50,7 @@ export function Sidebar({ onNavigate }: SidebarProps): React.ReactNode {
         <div>
           <p className="label-caps px-2 pb-1.5">Platform</p>
           <ul className="space-y-0.5">
-            {NAV_ITEMS.map((item) => {
+            {items.map((item) => {
               const active = isActivePath(pathname, item.href, item.exact);
               const Icon = item.icon;
               return (
@@ -63,6 +73,11 @@ export function Sidebar({ onNavigate }: SidebarProps): React.ReactNode {
                       className={cn('shrink-0', active ? 'text-brand' : 'text-muted group-hover:text-text')}
                     />
                     <span className="truncate">{item.label}</span>
+                    {item.adminOnly ? (
+                      <Badge tone="neutral" className="ml-auto">
+                        Admin
+                      </Badge>
+                    ) : null}
                   </Link>
                 </li>
               );

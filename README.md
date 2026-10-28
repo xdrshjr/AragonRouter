@@ -13,7 +13,7 @@
 <p align="center">
   <sub><b>适合</b>：想给一堆客户端一个统一出口、上游 Key 自己攥着、又要看用量的人 ·
   <b>不适合</b>：需要多租户、多实例共享同一份数据、或跨协议互转（见
-  <a href="#10-已知限制">已知限制</a>）</sub>
+  <a href="#11-已知限制">已知限制</a>）</sub>
 </p>
 
 <p align="center">
@@ -36,7 +36,8 @@
   <a href="#快速开始">三条命令跑起来</a> ·
   <a href="#功能特性">功能特性</a> ·
   <a href="#6-api-与-curl-示例">API 示例</a> ·
-  <a href="#7-故障排查">故障排查</a>
+  <a href="#7-用户系统">用户系统</a> ·
+  <a href="#8-故障排查">故障排查</a>
 </p>
 
 **能力速览**（逐条说明见「功能特性」表）：
@@ -45,6 +46,8 @@
   `POST /api/v1/chat/completions`（OpenAI 兼容）、`GET /api/v1/models`
 - 管理侧（控制台 + REST）：登录会话、Key 增查吊销、Provider 增删改查/连通性测试、
   日志分页、用量统计
+- 用户系统：游客可浏览控制台外壳，注册/登录强制图形验证码，管理员在
+  `/console/users` 管理账号（角色、状态、重置口令、删除）并开关注册
 - `stream: true` 时按 SSE 逐块透传，不整体缓冲
 
 > 第一次接触本项目？直接跳到「快速开始」三条命令；只想知道能做什么，看「功能特性」表格。
@@ -96,10 +99,11 @@
 | [4. 环境变量](#4-环境变量) | 必填与可选变量、口令强度要求 |
 | [5. 一键启停](#5-一键启停) | 启动 / 停止 / 端到端验证 / 单元与集成测试 |
 | [6. API 与 curl 示例](#6-api-与-curl-示例) | 管理侧与客户侧可直接粘贴的调用 |
-| [7. 故障排查](#7-故障排查) | 报错原文 → 原因与处理 |
-| [8. 安全说明](#8-安全说明) | 凭证、会话与请求上限 |
-| [9. 品牌资源与图标流水线](#9-品牌资源与图标流水线) | 图标母版怎么打分、三档产物怎么生成 |
-| [10. 已知限制](#10-已知限制) | 明确不做、自动化覆盖不到的部分 |
+| [7. 用户系统](#7-用户系统) | 角色模型、`/api/auth/**` 与 `/api/admin/users/**`、验证码与注册开关 |
+| [8. 故障排查](#8-故障排查) | 报错原文 → 原因与处理 |
+| [9. 安全说明](#9-安全说明) | 凭证、会话与请求上限 |
+| [10. 品牌资源与图标流水线](#10-品牌资源与图标流水线) | 图标母版怎么打分、三档产物怎么生成 |
+| [11. 已知限制](#11-已知限制) | 明确不做、自动化覆盖不到的部分 |
 
 ---
 
@@ -161,7 +165,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\stop-dev.ps1
 | 用量统计 | 已实现 | `GET /api/admin/stats?range=24h\|7d\|30d` 聚合请求数与 tokens，`series` 为等宽时间桶可直接画图；控制台「概览」页内联 SVG 折线 |
 | 一键启停脚本 | 已实现 | `scripts\start-dev.ps1`（自动挑端口、依赖缺失自动装、命名互斥量防并发、就绪后复查端口归属）与 `scripts\stop-dev.ps1`（按 PID 结束进程树、只杀**能证明属于本仓库**的进程），幂等可重复执行 |
 | 离线端到端测试 | 已实现 | `scripts\test-api.ps1` 自带本地桩上游（`tests/integration/stub-upstream.mjs`），无网络也能跑通「401 → 登录 → 建 Key → 建 Provider → 非流式 → SSE → OpenAI → models → 坏 key → 凭证注入/剥离 → 日志 → 统计 → 停机」并逐条打印 `PASS`/`FAIL` |
-| 管理控制台 | 已实现 | 暗色优先 UI（`/console`）：概览、Key、Provider（含「Test」连通性按钮）、日志、设置；会话为 HMAC 签名 Cookie，失败登录限流。长相见[截图](#截图) |
+| 管理控制台 | 已实现 | 暗色优先 UI（`/console`）：概览、Key、Provider（含「Test」连通性按钮）、日志、用户（仅管理员）、设置；账号会话为数据库行 + HttpOnly Cookie，登录失败限流。长相见[截图](#截图) |
+| 用户系统 | 已实现 | 游客可浏览控制台外壳；登录/注册走同一个弹窗并强制图形验证码；注册出来的 `member` 可登录但调不动 `/api/admin/**`；管理员在 `/console/users` 搜索/过滤/分页、创建账号、改角色与状态、重置口令、删除账号，最后一个管理员与自我锁定由服务端拒绝并在界面内联显示。详见[用户系统](#7-用户系统) |
 
 ---
 
@@ -212,16 +217,22 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\stop-dev.ps1
 │   │   │   ├── v1/messages/route.ts            Anthropic 协议转发
 │   │   │   ├── v1/chat/completions/route.ts    OpenAI 兼容转发
 │   │   │   ├── v1/models/route.ts              聚合模型列表
-│   │   │   └── admin/                          会话 / keys / providers / logs / stats
-│   │   ├── login/                              登录页（console-ui 提供）
-│   │   ├── console/                            控制台页面（概览/Key/Provider/日志/设置）
+│   │   │   ├── auth/                           session / captcha / login / register / logout / password
+│   │   │   └── admin/                          会话 / keys / providers / logs / stats / users / settings
+│   │   ├── login/                              登录页（弹窗表单的直链兜底，服务端校验 next）
+│   │   ├── console/                            控制台页面（概览/Key/Provider/日志/用户/设置）
 │   │   ├── icon.png · apple-icon.png           图标路由（App Router 文件约定，构建产物见 brand-mark）
 │   │   ├── layout.tsx · globals.css            全局布局与样式
 │   │   └── page.tsx                            `/` 重定向到 `/console`（见 next.config.ts）
 │   ├── components/                             控制台组件
+│   │   ├── auth/                               登录弹窗、注册表单、AuthProvider、图形验证码
+│   │   ├── console/                            面板、api.ts（唯一 HTTP 客户端）、导航与格式化
+│   │   │   └── users/                          用户管理的表格、列表状态机与三个对话框
+│   │   ├── ui/                                 自建设计系统（按钮/表格/弹窗/Toast…）
 │   │   └── brand/BrandMark.tsx                 品牌标识（消费 public/brand-mark.png）
-│   └── lib/                                    db / env / crypto / auth / apikeys /
-│                                               providers / upstream / proxy / logs / stats
+│   └── lib/                                    db / env / crypto / auth / sessions / users / settings /
+│                                               captcha / password / apikeys / providers / upstream /
+│                                               proxy / logs / stats
 ├── public/
 │   ├── brand-mark.png                          512×512 品牌母版（页面内使用）
 │   ├── screenshot-01.png                       README 截图：概览页（/console）
@@ -237,7 +248,16 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\stop-dev.ps1
 │   ├── unit/                                   Vitest 单元测试（根 vitest.config.ts 唯一 include）
 │   ├── ui/                                     控制台 UI 测试（独立配置，需 --config 显式运行）
 │   │   ├── vitest.config.ts                    含 .tsx、esbuild jsx=automatic、node 环境
+│   │   ├── support/admin-harness.ts             把 fetch 接到真实路由处理器并维护 cookie jar
+│   │   ├── users-panel.test.tsx                 /console/users：入口 / 守卫 / 表格 / 过滤 / 创建校验
 │   │   └── *.test.ts · *.test.tsx              查询构建 / 格式化 / SVG 几何 / 渲染与 a11y
+│   ├── users-admin-ui/                          用户管理测试（与 tests/ui 同一份配置，同样需 --config）
+│   │   ├── users-list-state.test.tsx            keyset 列表状态机（替换 vs 追加失败）
+│   │   ├── settings-switch.test.tsx             注册开关的读写与只读态
+│   │   ├── users-shell-access.test.tsx          真实 AuthGuard：游客/成员/管理员三态
+│   │   ├── users-boundary.test.ts               面板 ↔ 真实 /api/admin/users 处理器
+│   │   ├── users-pagination-races.test.ts       并发写入下的游标分页与幂等重试
+│   │   └── readme-contract.test.ts              README 用户系统章节的契约断言
 │   └── integration/
 │       ├── vitest.config.ts                    集成测试专用配置（串行执行、别名 @、node 环境）
 │       ├── stub-upstream.mjs                   本地桩上游（离线端到端验证用）
@@ -477,14 +497,16 @@ npx vitest run --config tests/integration/vitest.config.ts
 > 并行跑两个这类文件时，一个文件的停机/扫描会杀掉或清掉另一个文件正在用的服务与记录。
 > 串行多花几分钟，但结果是确定的。
 
-控制台 UI 测试（`tests/ui/**`，含 `.tsx`）同样不在根配置的 include 里，要显式指定它自己的配置：
+控制台 UI 测试（`tests/ui/**` 与 `tests/users-admin-ui/**`，含 `.tsx`）同样不在根配置的
+include 里，要显式指定它自己的配置：
 
 ```cmd
 npx vitest run --config tests/ui/vitest.config.ts
 ```
 
 > 记住这条边界：`npm test` 只跑 `tests/unit/**`（根 `vitest.config.ts` 的 include 仅此一条），
-> `tests/ui/**` 与 `tests/integration/**` 都必须带 `--config` 才会运行，详见「已知限制」。
+> `tests/ui/**`、`tests/users-admin-ui/**` 与 `tests/integration/**` 都必须带 `--config` 才会运行，
+> 详见「已知限制」。
 
 ---
 
@@ -609,7 +631,175 @@ HTTP/1.1 401 Unauthorized
 
 ---
 
-## 7. 故障排查
+## 7. 用户系统
+
+控制台不再是「一个口令换一个 Cookie」的单人后台：账号存在 `users` 表里，登录与注册走同一个
+弹窗并强制图形验证码；游客照样能进控制台外壳看结构，只有面板数据需要账号。
+
+### 7.1 角色模型
+
+| 角色 | 怎么来的 | 能做什么 | 不能做什么 |
+| --- | --- | --- | --- |
+| 游客（无会话） | 默认状态，没有登录 | 打开 `/console/**` 的外壳（侧边栏、顶栏、页脚），看到「登录后查看」遮罩；点任意受保护操作会弹出登录弹窗 | 读不到任何面板数据；所有 `/api/admin/**` 一律 `401` |
+| `member` | 自助注册（`POST /api/auth/register`）或被管理员创建 | 登录、看控制台外壳、改自己的口令（`POST /api/auth/password`） | 调不动 `/api/admin/**`（`403`）；侧边栏看不到 Users 入口，直接访问 `/console/users` 显示「需要管理员权限」提示 |
+| `admin` | 首次启动用 `ADMIN_PASSWORD` 建出的 `admin` 账号，或被另一个管理员提权 | 全部管理动作、用户管理、注册开关 | 不能停用/降级/删除自己；不能让实例失去最后一个可用管理员（服务端一律 `400`） |
+
+字段规则（服务端是唯一权威，前端只是提前拦一遍）：
+
+- `username`：3–32 字符，字母/数字/`.`/`-`/`_`，必须以字母或数字开头，**创建后不可修改**，
+  大小写不敏感地唯一。
+- `displayName`：可空，清理控制字符后最长 64。
+- 口令：8–200 字符，必须含至少一个字母与一个数字，且不得包含用户名片段。
+- 只有 `status=active` 的账号能登录；把账号停用会立刻吊销它的所有会话。
+
+### 7.2 端点表
+
+**`/api/auth/**`（游客可调，`src/app/api/auth/`）**
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| `GET` | `/api/auth/captcha` | 发一张新验证码：`{data:{challengeId, imageDataUrl, expiresAt}}`，`imageDataUrl` 是 `data:image/svg+xml` 前缀的图片 |
+| `GET` | `/api/auth/session` | 读身份：`{data:{user, registration:{enabled}}}`；**游客也是 200**（`user:null`），不是 401 |
+| `POST` | `/api/auth/login` | `{username,password,challengeId,captchaAnswer}` → `200 {data:{user}}` + `Set-Cookie: aragon_session`；错误 `400`/`401`/`429` |
+| `POST` | `/api/auth/register` | `{username,password,displayName?,challengeId,captchaAnswer}` → `201 {data:{user}}`；注册被关闭时 `403` |
+| `POST` | `/api/auth/logout` | `200 {data:{ok:true}}` 并清 Cookie |
+| `POST` | `/api/auth/password` | `{currentPassword,newPassword}` → `200 {data:{ok:true}}` |
+
+**`/api/admin/users/**` 与注册开关（仅 `admin`）**
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| `GET` | `/api/admin/users` | `?limit&cursor&search&role&status` → `{data:UserPublic[], nextCursor}`；keyset 游标是 `<created_at>|<id>`，`limit` 上限 100，`search` 同时匹配用户名与显示名 |
+| `POST` | `/api/admin/users` | `{username,password,role?,displayName?}` → `201 {data:UserPublic}` |
+| `GET` | `/api/admin/users/[id]` | 账号详情 + 在线会话：`{data:UserDetailPublic}` |
+| `PATCH` | `/api/admin/users/[id]` | `{displayName?,role?,status?}` → `{data:UserPublic}`；`displayName:null` 表示清空 |
+| `DELETE` | `/api/admin/users/[id]` | `{data:{ok:true}}`，该账号会话一并删除 |
+| `POST` | `/api/admin/users/[id]/password` | `{password}` → `{data:{ok:true}}`，同时吊销该账号其它设备会话 |
+| `DELETE` | `/api/admin/users/[id]/sessions/[sessionId]` | 吊销某个设备会话 |
+| `GET` | `/api/admin/settings` | `{data:{registration:{enabled}}}` |
+| `PATCH` | `/api/admin/settings` | `{registration:{enabled}}` → 同形状；写入后 `/api/auth/register` 立刻按新状态执行 |
+
+失败统一 `{error:{message}}`：游客 `401 unauthorized`、`member` `403 forbidden`、规则冲突 `400`
+（例如 `at least one active admin must remain`）、未知 id `404 user not found`。
+控制台把这些服务端文案翻成可读句子再内联显示，绝不静默吞掉。
+
+### 7.3 验证码策略
+
+- **登录与注册都强制**图形验证码：请求里没有 `challengeId` / `captchaAnswer` 一律 `400`。
+- 验证码是自绘 SVG（`src/lib/captcha.ts`，5 个字形，不引第三方库、不依赖字体）；服务端只存
+  `sha256(id:answer)` 与过期时间/尝试次数，**有效期 5 分钟**、**最多尝试 5 次**、**成功即消费**
+  ——重试必须重新取一张。
+- 前端把 `imageDataUrl` 直接绑到 `<img src>`，点图即换一张；提交失败会自动刷新验证码，
+  并把「验证码不对」和「用户名口令不对」分开提示。
+- 验证码通过之前不做任何口令比对，因此爆破者拿不到「口令对不对」的信号；登录失败仍按客户端
+  指纹限流（30 次窗口）。
+
+### 7.4 `/api/admin/session`：给自动化留的例外
+
+`POST /api/admin/session`（`{password}` → Cookie）是上一轮就存在的管理入口，**不带验证码**。
+这是刻意保留的例外：`scripts/test-api.ps1`、CI 与 curl 脚本需要一个可编排的登录路径，而自动化
+没法「看图填字」。它仍然要过 `ADMIN_PASSWORD` 校验、失败限流，并且只签发 `admin` 会话（用
+`member` 口令打这个门会拿到 `403`）。
+
+浏览器里的产品路径是 `/api/auth/login` + 登录弹窗；`/api/admin/session` 不参与浏览器流程，
+只作为自动化入口存在。两者签发的是同一种 Cookie（`aragon_session`），因此拿到 Cookie 之后的
+所有 `/api/admin/**` 调用完全一样。
+
+### 7.5 注册开关
+
+- 默认**开启**：`settings` 表缺行即视为开启，装好就能注册。
+- 管理员在 `/console/settings` 拨动「Allow self-registration」，前端走
+  `PATCH /api/admin/settings`，随后**重新 `GET` 一次确认**并弹 Toast，再刷新会话上下文，让
+  登录弹窗的「Create account」页签立刻同步。
+- 关闭后：`/api/auth/register` 返回 `403`，弹窗隐藏注册页签；管理员仍可在 `/console/users`
+  创建账号。
+- **非管理员没有「只读的设置页」可看**：`AuthGuard` 的 `ConsoleBody` 对所有非管理员把主区换成
+  「需要管理员权限」遮罩（`Administrator access required`），因此 `member` 直接打开
+  `/console/settings` 看到的是这块遮罩，而不是一个拨不动的开关；侧边栏里也没有管理员专属入口。
+  `SettingsPanel` 内部仍保留一段只读降级（`read-only: open/closed` 徽标、不发任何管理员请求的
+  空摘要），用于面板**不经过控制台外壳**被单独挂载的场景：那时它既不该替一个 `member` 去发
+  `/api/admin/**`，也不该渲染一个按下去只会 403 的开关。这是纵深防御，不是线上 `member`
+  看到的界面 —— `tests/users-admin-ui/users-shell-access.test.tsx` 钉住外壳行为，
+  `tests/users-admin-ui/readme-contract.test.ts` 钉住这段文案本身。
+
+### 7.6 控制台里的用户管理
+
+`/console/users`（侧边栏 Users，**仅管理员可见**）：
+
+- 表格列：用户名、显示名、角色、状态、最后登录、创建时间与行内操作；自己的那一行带 `you` 标记。
+- 搜索框**防抖 300ms**，角色/状态两个下拉直接作为查询参数；「Load more」用上一页返回的
+  `nextCursor` 追加并按 id 去重，并发写入不会把同一行渲染两次。
+- 「Create account」按服务端规则前置校验（用户名格式、弱口令、口令含用户名），重名之类的服务端
+  规则错误在对话框内联展示；成功后刷新列表并 Toast。
+- 行内「Edit」改显示名/角色/状态，「Reset」设置新口令（吊销该账号其它设备），「Delete」走
+  `ConfirmDialog` 二次确认。所有 `400` 规则文案内联展示，例如
+  `At least one active admin must remain. Promote another account to admin first.`
+- 「Load more」失败时**不会**把已经翻到的行换成整页错误：已加载的行与 `nextCursor` 都保留，
+  列表底部出现内联错误与「Retry this page」，重试只重发刚才失败的那一页；只有首页就失败
+  （屏幕上还没有任何行）时才用整块 `ErrorState`。
+- 换过滤器/改搜索词/手动刷新（即「替换式」加载）失败时，屏幕上的行保留，但**游标作废**：
+  那枚 `nextCursor` 是为*上一套*过滤器签发的，拿它继续追加会把两套过滤器的结果混在一屏。
+  此时「Load more」禁用，底部提示变成 `Pagination resumes when the list loads again.`，
+  等「Try again」成功拿到新游标才恢复分页。
+- 实现拆在 `src/components/console/users/`（表格、列表状态机 `users-list-state.ts`、创建/编辑/
+  重置口令三个对话框、共享字段），`UsersPanel.tsx` 只保留编排、过滤器与 Toast；面板接线/表格/
+  创建校验的验收测试就是验收项点名的 `tests/ui/users-panel.test.tsx`，其余职责各有一份
+  （`tests/users-admin-ui/`：列表状态机 / 注册开关 / 真实路由边界 / 分页竞态 / 外壳访问 /
+  只读态 / README 契约），两处共用同一份 vitest 配置。
+- 游客点任何受保护操作会弹登录弹窗；`member` 直接打开 `/console/users`（或任何面板）看到
+  「Administrator access required」提示，不会白屏也不会崩溃，也不会发出任何管理员请求。
+
+### 7.7 curl 示例
+
+```cmd
+rem 1) 取一张验证码：返回 challengeId 与 data:image/svg+xml 图片
+curl -s http://127.0.0.1:3001/api/auth/captcha
+
+rem 2) 注册一个 member（challengeId 用上一步的返回值，captchaAnswer 填图里的字符）
+curl -i -c cookies.txt -X POST http://127.0.0.1:3001/api/auth/register ^
+  -H "content-type: application/json" ^
+  -d "{\"username\":\"alice\",\"password\":\"Quiet-H4rbour-1\",\"displayName\":\"Alice\",\"challengeId\":\"<challengeId>\",\"captchaAnswer\":\"ABCDE\"}"
+
+rem 3) 登录（同样要验证码；成功后 Cookie 落在 cookies.txt）
+curl -i -c cookies.txt -X POST http://127.0.0.1:3001/api/auth/login ^
+  -H "content-type: application/json" ^
+  -d "{\"username\":\"alice\",\"password\":\"Quiet-H4rbour-1\",\"challengeId\":\"<challengeId>\",\"captchaAnswer\":\"ABCDE\"}"
+
+rem 4) 读身份（游客也是 200，user 为 null）
+curl -b cookies.txt http://127.0.0.1:3001/api/auth/session
+
+rem 5) 改自己的口令，然后登出
+curl -b cookies.txt -X POST http://127.0.0.1:3001/api/auth/password ^
+  -H "content-type: application/json" ^
+  -d "{\"currentPassword\":\"Quiet-H4rbour-1\",\"newPassword\":\"Quiet-H4rbour-2\"}"
+curl -b cookies.txt -X POST http://127.0.0.1:3001/api/auth/logout
+
+rem 6) 管理员列表：分页、按角色/状态过滤、按关键字搜索
+curl -b admin-cookies.txt "http://127.0.0.1:3001/api/admin/users?limit=20&role=member"
+curl -b admin-cookies.txt "http://127.0.0.1:3001/api/admin/users?status=active&search=ali"
+
+rem 7) 创建账号、改角色、重置口令、删除账号
+curl -b admin-cookies.txt -X POST http://127.0.0.1:3001/api/admin/users ^
+  -H "content-type: application/json" ^
+  -d "{\"username\":\"bob\",\"password\":\"Quiet-H4rbour-3\",\"role\":\"member\"}"
+curl -b admin-cookies.txt -X PATCH http://127.0.0.1:3001/api/admin/users/<id> ^
+  -H "content-type: application/json" -d "{\"role\":\"admin\"}"
+curl -b admin-cookies.txt -X POST http://127.0.0.1:3001/api/admin/users/<id>/password ^
+  -H "content-type: application/json" -d "{\"password\":\"Quiet-H4rbour-4\"}"
+curl -b admin-cookies.txt -X DELETE http://127.0.0.1:3001/api/admin/users/<id>
+
+rem 8) 注册开关：读 → 关 → 再读
+curl -b admin-cookies.txt http://127.0.0.1:3001/api/admin/settings
+curl -b admin-cookies.txt -X PATCH http://127.0.0.1:3001/api/admin/settings ^
+  -H "content-type: application/json" -d "{\"registration\":{\"enabled\":false}}"
+```
+
+> `admin-cookies.txt` 用「6.1 管理侧：登录」那条命令生成（`POST /api/admin/session`，自动化入口，
+> 不需要验证码）。用 `/api/auth/login` 登录的浏览器场景，Cookie 名称与后续调用完全一致。
+
+---
+
+## 8. 故障排查
 
 | 现象 | 原因与处理 |
 | --- | --- |
@@ -648,7 +838,7 @@ HTTP/1.1 401 Unauthorized
 
 ---
 
-## 8. 安全说明
+## 9. 安全说明
 
 - 上游凭证以 AES-256-GCM 加密存 SQLite，接口只返回 `maskedKey`（如 `sk-a…a1b2`）；
 - 入站凭证（`authorization`、`x-api-key`、`cookie`）在下发上游前被剥离，上游错误体
@@ -660,7 +850,7 @@ HTTP/1.1 401 Unauthorized
 
 ---
 
-## 9. 品牌资源与图标流水线
+## 10. 品牌资源与图标流水线
 
 头部的图标（`public/brand-mark.png` 与两档 favicon）是 AI 生成后用
 `design/build-brand-assets.py` 规整的位图：脚本把画面投影到 C10 双色
@@ -691,7 +881,7 @@ python design/build-brand-assets.py --source design/ai/<选中>.png  # 规整成
 
 ---
 
-## 10. 已知限制
+## 11. 已知限制
 
 诚实划界：下面是当前实现**明确不做**或**覆盖不到**的部分。按现状规划使用方式，不要指望它们。
 
@@ -699,7 +889,7 @@ python design/build-brand-assets.py --source design/ai/<选中>.png  # 规整成
 
 | 限制 | 现状 | 影响与做法 |
 | --- | --- | --- |
-| `tests/ui/**` 不在 `npx vitest run` 的 include 里 | 根 `vitest.config.ts` 的 include 只有 `tests/unit/**/*.test.ts`，所以 `npm test` **不会**执行 `tests/ui/**`（含 `.tsx`）与 `tests/integration/**` | 改了控制台请显式跑 `npx vitest run --config tests/ui/vitest.config.ts`；改了转发/脚本请跑 `npx vitest run --config tests/integration/vitest.config.ts`。`npm test` 全绿**不等于** UI 与脚本回归通过 |
+| `tests/ui/**` 与 `tests/users-admin-ui/**` 不在 `npx vitest run` 的 include 里 | 根 `vitest.config.ts` 的 include 只有 `tests/unit/**/*.test.ts`，所以 `npm test` **不会**执行 `tests/ui/**`（含 `.tsx`）、`tests/users-admin-ui/**` 与 `tests/integration/**` | 改了控制台请显式跑 `npx vitest run --config tests/ui/vitest.config.ts`（它的 include 已同时覆盖 `tests/ui/**` 与 `tests/users-admin-ui/**`）；改了转发/脚本请跑 `npx vitest run --config tests/integration/vitest.config.ts`。`npm test` 全绿**不等于** UI 与脚本回归通过 |
 | 端到端链路由 `scripts/test-api.ps1` 承担 | 它要真实起 dev server、真实端口、真实进程树，还要拉起桩上游，因此**不在** `npm test` 里，只能手工运行 | 改动转发逻辑前后运行 `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\test-api.ps1`，以退出码与 `PASS`/`FAIL` 明细为准。它完全离线，但要占端口与那把命名互斥量，且首次运行受冷编译影响（见「故障排查」） |
 | 上游真实连通性需人工确认 | 桩上游只验证协议形状、鉴权与凭证注入/剥离，**不校验**真实上游：Key 是否有效、模型名是否存在、网络是否可达，都不在自动化覆盖范围内 | 在控制台「Provider」页对每个 provider 点「Test」（等价于 `POST /api/admin/providers/<id>/test`，5 秒超时探测 `/v1/models`）手工确认；接真实上游前这一步不能省 |
 

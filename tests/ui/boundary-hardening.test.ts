@@ -95,11 +95,11 @@ describe('C3 gate vs API: only the API can prove a session', () => {
   it('a forged cookie passes the advisory shape check but the API rejects it', async () => {
     await signIn(TEST_ADMIN_PASSWORD);
 
-    // Shape-valid, correctly *shaped* `<exp>.<64 hex>` but signed with garbage: the
+    // Correctly *shaped* for C-TOKEN (`<32 hex>.<64 hex>`) but backed by no row: the
     // server-side gate in session-gate.ts accepts this (it cannot verify without the
-    // secret), so the 401 from the API - and the redirect it triggers - is the only
-    // thing standing between an attacker and the console.
-    const forged = `${Date.now() + 60_000}.${'a'.repeat(64)}`;
+    // session store), so the 401 from the API - and the redirect it triggers - is the
+    // only thing standing between an attacker and the console.
+    const forged = `${'ab'.repeat(16)}.${'a'.repeat(64)}`;
     harness.setCookie(forged);
     expect(hasSessionCookieShape(forged)).toBe(true);
 
@@ -113,9 +113,9 @@ describe('C3 gate vs API: only the API can prove a session', () => {
     expect(expired).toHaveBeenCalledTimes(1);
   });
 
-  it('a genuinely signed but expired token is rejected with the same signal', async () => {
-    // Signed with the real C3 secret, expiry in the past: shape check passes, HMAC
-    // verifies, and only the expiry comparison saves the console.
+  it('a genuinely minted but expired session is rejected with the same signal', async () => {
+    // A real database session minted in the past: shape check passes, the secret
+    // matches its stored hash, and only the expiry comparison saves the console.
     const stale = createSessionToken(Date.now() - SESSION_TTL_MS - 5_000, TEST_SESSION_SECRET);
     harness.setCookie(stale);
     expect(hasSessionCookieShape(stale)).toBe(true);
@@ -128,13 +128,25 @@ describe('C3 gate vs API: only the API can prove a session', () => {
     expect(expired).toHaveBeenCalledTimes(1);
   });
 
-  it('a token signed with the wrong secret is rejected even though it has not expired', async () => {
-    const wrongKey = createSessionToken(Date.now(), 'another-secret-with-32-plus-characters-x');
-    expect(wrongKey).not.toBe(createSessionToken(Date.now(), TEST_SESSION_SECRET));
-    harness.setCookie(wrongKey);
+  it('a token whose secret half was tampered with is rejected even though it is live', async () => {
+    await signIn(TEST_ADMIN_PASSWORD);
+    const valid = harness.cookie() ?? '';
+    expect(hasSessionCookieShape(valid)).toBe(true);
+
+    // Flip one nibble of the secret half: same shape, same session id, wrong secret -
+    // the store only ever holds sha256(secret), so this can never authenticate.
+    const [sessionId, secret] = valid.split('.');
+    const tamperedSecret = `${secret?.[0] === 'a' ? 'b' : 'a'}${(secret ?? '').slice(1)}`;
+    const tampered = `${sessionId}.${tamperedSecret}`;
+    expect(tampered).not.toBe(valid);
+
+    harness.setCookie(tampered);
+    const expired = vi.fn();
+    subscribeSessionExpired(expired);
 
     const error = await captureApiError(listKeys());
     expect(error.status).toBe(401);
+    expect(expired).toHaveBeenCalledTimes(1);
   });
 
   it('an empty or truncated cookie is refused without any session at all', async () => {

@@ -178,33 +178,56 @@ describe('/login', () => {
     expect(page).toMatch(/<LoginForm nextPath=\{nextPath\}/);
   });
 
-  it('posts the password through the C3 client and redirects to the console', () => {
-    expect(form).toContain('signIn(');
+  it('renders the same form component the console dialog uses', () => {
+    expect(form).toContain('<AuthForm');
+    expect(read('components/auth/LoginModal.tsx')).toContain('<AuthForm');
+    // The credentials go through the C-AUTH-WIRE client, captcha included.
+    expect(read('components/auth/auth-submit.ts')).toContain("from '@/components/console/api'");
+  });
+
+  it('sends the account to the sanitised target after a successful sign-in', () => {
     expect(form).toContain('router.replace(nextPath)');
     expect(form).toContain('router.refresh()');
+    // No C3-only password POST survives: the page signs in with username+password.
+    expect(form).not.toContain('signIn(');
   });
 
-  it('shows a wrong password inline on the field instead of an alert dialog', () => {
+  it('shows failures inline instead of an alert dialog', () => {
     expect(form).not.toMatch(/\bwindow\.alert\b/);
-    // The message is bound to the field: `Field error=` renders it under the input
-    // and `aria-describedby` links it, while `invalid` sets aria-invalid.
-    expect(form).toMatch(/<Field label="Admin password" error=\{error\}/);
-    expect(form).toContain('invalid={error !== null}');
-    expect(form).toContain('aria-describedby={describedBy}');
+    expect(read('components/auth/AuthForm.tsx')).toMatch(/role="alert"/);
+    // Every control is bound to its message through the kit's `Field`.
+    expect(read('components/auth/AuthForm.tsx')).toContain('aria-describedby={describedBy}');
   });
 
-  it('never echoes the typed password back into the message', () => {
-    expect(form).not.toMatch(/setError\(\s*password/);
-    expect(form).toContain('setPassword(\'\')');
+  it('never echoes the typed password back into a message', () => {
+    const auth = read('components/auth/AuthForm.tsx');
+    expect(auth).not.toMatch(/setErrors?\([^)]*password\b/);
+    expect(auth).toContain("password: ''");
+    const submit = read('components/auth/auth-submit.ts');
+    // Only the policy/a field message is surfaced - never the value itself.
+    expect(submit).not.toContain('input.password');
   });
 
-  it('gates the console shell on the session (unauthenticated -> /login)', () => {
+  it('explains an expired session instead of pretending the visitor is new', () => {
+    expect(page).toContain('hasSessionCookieShape');
+    expect(page).toContain('sessionExpiredHint');
+  });
+
+  it('is guest first: the console shell no longer redirects anywhere', () => {
     const layout = read('app/console/layout.tsx');
-    expect(layout).toContain('requireSession');
+    expect(layout).toContain('<AuthProvider>');
     expect(layout).toContain('<AuthGuard>');
+    expect(layout).not.toContain('requireSession');
+    expect(layout).not.toContain('redirect(');
+
     const guard = read('components/console/AuthGuard.tsx');
-    expect(guard).toContain('getSession(');
-    expect(guard).toContain('router.replace(buildLoginRedirect(pathname))');
+    expect(guard).toContain('useAuth()');
+    expect(guard).toContain('<GuestMask');
+    expect(guard).toContain('<AdminRequiredMask');
+    expect(guard).not.toContain('getSession(');
+    expect(guard).not.toContain("router.replace(");
+    // A guest never mounts the panels: the mask is returned before `children`.
+    expect(guard).toMatch(/if \(isGuest\) \{[\s\S]*?<GuestMask[\s\S]*?\n  \}/);
   });
 });
 

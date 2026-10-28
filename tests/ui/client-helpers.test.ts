@@ -1,46 +1,22 @@
 /**
- * Redirect + clipboard helpers that the console relies on at the boundary between
- * "no session" and "session gone".
+ * Clipboard helper at the boundary of a client-only browser API.
  *
- * `AuthGuard` and `CopyButton` are client components, so they cannot be rendered
- * without a DOM (the work package may not add jsdom/testing-library). Both expose
- * their decision logic as exported functions, which is what is exercised here; the
- * components themselves only wire these functions to props.
+ * This file used to cover `buildLoginRedirect`, the client-side builder for
+ * `/login?next=`. The console is guest-first now: nothing redirects to `/login`, so
+ * that helper is gone. The safe *deep link* it guarded still exists as
+ * `buildLoginHref` and is covered in `session-gate.test.ts`.
+ *
+ * `CopyButton` is a client component, so it cannot be rendered without a DOM (the
+ * work package may not add jsdom/testing-library); its decision logic is exported
+ * and exercised here, and the component only wires it to a click.
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('next/navigation', () => ({
-  usePathname: () => '/console',
-  useRouter: () => ({ replace: () => undefined, refresh: () => undefined, push: () => undefined }),
-}));
-
-const { buildLoginRedirect } = await import('@/components/console/AuthGuard');
 const { copyText } = await import('@/components/ui/CopyButton');
 
 afterEach(() => {
   vi.unstubAllGlobals();
-});
-
-describe('buildLoginRedirect (client gate)', () => {
-  it('keeps the current console path so the operator lands back where they were', () => {
-    expect(buildLoginRedirect('/console/keys')).toBe('/login?next=%2Fconsole%2Fkeys');
-    expect(buildLoginRedirect('/console/logs')).toBe('/login?next=%2Fconsole%2Flogs');
-  });
-
-  it('falls back to /login for a missing or hostile pathname', () => {
-    expect(buildLoginRedirect(null)).toBe('/login');
-    expect(buildLoginRedirect(undefined)).toBe('/login');
-    expect(buildLoginRedirect('')).toBe('/login');
-    expect(buildLoginRedirect('//evil.example')).toBe('/login');
-    expect(buildLoginRedirect('https://evil.example')).toBe('/login');
-    expect(buildLoginRedirect('console')).toBe('/login');
-  });
-
-  it('never redirects to the login page with itself as the next target', () => {
-    expect(buildLoginRedirect('/login')).toBe('/login');
-    expect(buildLoginRedirect('/login?next=/console')).toBe('/login');
-  });
 });
 
 describe('copyText', () => {

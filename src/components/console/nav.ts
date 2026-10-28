@@ -4,6 +4,7 @@ import {
   ScrollText,
   Server,
   Settings2,
+  Users,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -22,6 +23,14 @@ export interface NavItem {
   icon: LucideIcon;
   /** Exact match only (the overview page must not stay active on its children). */
   exact: boolean;
+  /**
+   * True for entries that only an `admin` may use.
+   *
+   * The marker lives on the item (not in the sidebar) so every consumer filters by
+   * one rule: `/console/users` reads `/api/admin/users/**`, which answers 403 for a
+   * member, so showing the link to a member would only produce a dead end.
+   */
+  adminOnly?: boolean;
 }
 
 /** Sidebar order, also used to resolve the current page title in the topbar. */
@@ -55,13 +64,34 @@ export const NAV_ITEMS: readonly NavItem[] = [
     exact: false,
   },
   {
+    href: `${CONSOLE_BASE_PATH}/users`,
+    label: 'Users',
+    hint: 'Console accounts, roles and access',
+    icon: Users,
+    exact: false,
+    adminOnly: true,
+  },
+  {
     href: `${CONSOLE_BASE_PATH}/settings`,
     label: 'Settings',
-    hint: 'Read-only configuration',
+    hint: 'Registration and environment',
     icon: Settings2,
     exact: false,
   },
 ];
+
+/**
+ * The navigation entries one visitor may see.
+ *
+ * `guest` and `member` see the same rail: the panels behind every entry read the
+ * administrator API, and the shell answers a guest with the sign-in mask and a
+ * member with the "administrator access required" mask. `adminOnly` entries are
+ * removed entirely rather than rendered disabled - a link to a 403 page is worse
+ * than no link.
+ */
+export function visibleNavItems(isAdmin: boolean): NavItem[] {
+  return NAV_ITEMS.filter((item) => item.adminOnly !== true || isAdmin);
+}
 
 /**
  * True when `pathname` belongs to `href`.

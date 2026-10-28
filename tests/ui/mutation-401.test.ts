@@ -246,10 +246,15 @@ describe('panel wiring (static evidence: effects cannot run without a DOM)', () 
     }
   });
 
-  it('the shell subscribes to the signal and redirects to /login?next=', () => {
+  it('the shell subscribes to the signal and answers it with the sign-in dialog', () => {
     const guard = read('components/console/AuthGuard.tsx');
-    expect(guard).toContain('watchSessionExpiry(');
-    expect(guard).toContain('router.replace(buildLoginRedirect(currentPath.current))');
+    expect(guard).toContain('subscribeSessionExpired(');
+    // Guest-first: an expiry re-opens the dialog with the expiry notice and re-reads
+    // the session, instead of navigating to /login and losing the operator's place.
+    expect(guard).toContain("openLogin('login', SESSION_EXPIRED_NOTICE)");
+    expect(guard).toContain('void current.refresh()');
+    expect(guard).not.toContain('buildLoginRedirect');
+    expect(guard).not.toContain('router.replace(');
   });
 
   it('the transport layer raises the signal for every 401 except the sign-in probe', () => {

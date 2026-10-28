@@ -1,14 +1,38 @@
 /**
  * Client-side validation mirroring the gateway's own rules.
  *
- * The server (C5/C6) stays the authority - these checks exist so an operator gets
- * an inline message instead of a round-trip, and so a malformed value never
- * reaches `/api/admin/**`. The limits below match `src/lib/apikeys.ts` and
- * `src/lib/providers.ts`; `tests/ui/validation.test.ts` pins them.
+ * The server (C5/C6/C-USERS-WIRE) stays the authority - these checks exist so an
+ * operator gets an inline message instead of a round-trip, and so a malformed value
+ * never reaches `/api/admin/**`. The limits below match `src/lib/apikeys.ts`,
+ * `src/lib/providers.ts` and `src/lib/password.ts`; `tests/ui/validation.test.ts`
+ * and `tests/ui/users-panel.test.tsx` pin them.
+ *
+ * The account rules are not re-implemented here: the sign-in dialog already ships
+ * `@/components/auth/validation` (username / password / display-name policy), and a
+ * second copy is exactly how the two forms drift apart. This module composes those
+ * predicates into the administrator's create/edit/reset forms.
  */
 
-import type { CreateProviderPayload, Protocol, UpdateProviderPayload } from '@/components/console/types';
-import { PROTOCOLS } from '@/components/console/types';
+import {
+  DISPLAY_NAME_MAX_LENGTH,
+  PASSWORD_MIN_LENGTH,
+  USERNAME_MAX_LENGTH,
+  USERNAME_MIN_LENGTH,
+  validateDisplayNameInput,
+  validatePasswordInput,
+  validateUsernameInput,
+} from '@/components/auth/validation';
+import type {
+  CreateProviderPayload,
+  CreateUserPayload,
+  Protocol,
+  UpdateProviderPayload,
+  UpdateUserPayload,
+  UserPublic,
+  UserRole,
+  UserStatus,
+} from '@/components/console/types';
+import { PROTOCOLS, USER_ROLES, USER_STATUSES } from '@/components/console/types';
 
 export const NAME_MAX_LENGTH = 64;
 export const BASE_URL_MAX_LENGTH = 500;
@@ -73,7 +97,9 @@ export function validateBaseUrl(raw: unknown): string | null {
   if (parsed.username.length > 0 || parsed.password.length > 0) {
     return 'The URL must not contain credentials.';
   }
-  if (parsed.hostname.length === 0) return 'Enter an absolute URL, for example https://api.anthropic.com.';
+  if (parsed.hostname.length === 0) {
+    return 'Enter an absolute URL, for example https://api.anthropic.com.';
+  }
   return null;
 }
 
@@ -176,4 +202,240 @@ export function buildUpdateProviderPayload(values: ProviderFormValues): UpdatePr
   const apiKey = values.apiKey.trim();
   if (apiKey.length > 0) payload.apiKey = apiKey;
   return payload;
+}
+
+/* -------------------------------------------------------------------------- */
+/* C-USERS-WIRE - accounts (administrator)                                    */
+/* -------------------------------------------------------------------------- */
+
+/** The username/password/display-name budget, re-exported so callers have one source. */
+export const USER_USERNAME_MIN_LENGTH = USERNAME_MIN_LENGTH;
+export const USER_USERNAME_MAX_LENGTH = USERNAME_MAX_LENGTH;
+export const USER_PASSWORD_MIN_LENGTH = PASSWORD_MIN_LENGTH;
+/**
+ * Upper password bound.
+ *
+ * `src/lib/password.ts` refuses anything longer than 200 characters
+ * (`MAX_PASSWORD_LENGTH`), but the shared sign-in validator only enforces the lower
+ * bound. A 300-character password would therefore pass this form's pre-flight check
+ * and be refused by the server afterwards - graceful, but not the mirror the account
+ * dialogs promise. The console owns the administrator forms, so the missing half of
+ * the policy is enforced here rather than by editing the auth-ui module.
+ */
+export const USER_PASSWORD_MAX_LENGTH = 200;
+export const USER_DISPLAY_NAME_MAX_LENGTH = DISPLAY_NAME_MAX_LENGTH;
+
+/** The list `search` term is pasted into a LIKE pattern; 64 characters is plenty. */
+export const USER_SEARCH_MAX_LENGTH = 64;
+
+/** Create-account dialog values. The role defaults to `member`, like the API. */
+export interface UserFormValues {
+  username: string;
+  displayName: string;
+  password: string;
+  role: UserRole;
+}
+
+export interface UserFormErrors {
+  username: string | null;
+  displayName: string | null;
+  password: string | null;
+  role: string | null;
+}
+
+export const EMPTY_USER_FORM: UserFormValues = {
+  username: '',
+  displayName: '',
+  password: '',
+  role: 'member',
+};
+
+export function emptyUserFormErrors(): UserFormErrors {
+  return { username: null, displayName: null, password: null, role: null };
+}
+
+export function hasUserFormErrors(errors: UserFormErrors): boolean {
+  return (
+    errors.username !== null ||
+    errors.displayName !== null ||
+    errors.password !== null ||
+    errors.role !== null
+  );
+}
+
+/** C-USERS-WIRE: `role` must be one of the two published values. */
+export function validateUserRoleInput(raw: unknown): string | null {
+  if (typeof raw !== 'string' || !(USER_ROLES as readonly string[]).includes(raw)) {
+    return "Choose 'admin' or 'member'.";
+  }
+  return null;
+}
+
+/** C-USERS-WIRE: `status` filtering / patching uses the two published values. */
+export function validateUserStatusInput(raw: unknown): string | null {
+  if (typeof raw !== 'string' || !(USER_STATUSES as readonly string[]).includes(raw)) {
+    return "Choose 'active' or 'disabled'.";
+  }
+  return null;
+}
+
+/**
+ * Enforce the server's upper password bound.
+ *
+ * Exported so the create dialog, the reset dialog and the tests share one rule. It
+ * runs *before* the shared validator because `validatePasswordStrength` checks the
+ * length first as well: a 300-character password is refused for being long, not for
+ * whatever else it happens to contain.
+ *
+ * @param raw - candidate password, any type (non-strings are left to the shared
+ *   validator, which owns the "enter a password" message)
+ * @returns `null` when the length is acceptable, otherwise the inline message
+ */
+export function validateUserPasswordBudget(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  if (raw.length > USER_PASSWORD_MAX_LENGTH) {
+    return `The password must be at most ${USER_PASSWORD_MAX_LENGTH} characters.`;
+  }
+  return null;
+}
+
+/**
+ * Validate the create-account form.
+ *
+ * Mirrors `createUser` on the server: `validateUsername`, then the password policy of
+ * `validatePasswordStrength(password, username)` (length window included, so a
+ * password containing the username is refused before the request), then the
+ * display-name budget. The only rule a browser cannot reproduce is uniqueness - that
+ * stays a 400 the dialog shows inline.
+ */
+export function validateUserForm(values: UserFormValues): UserFormErrors {
+  return {
+    username: validateUsernameInput(values.username),
+    displayName: validateDisplayNameInput(values.displayName),
+    password: validateUserPassword(values.password, values.username),
+    role: validateUserRoleInput(values.role),
+  };
+}
+
+/** Reset-password dialog: same policy as a sign-up, without the display name. */
+export function validateUserPassword(raw: unknown, username: string): string | null {
+  const overBudget = validateUserPasswordBudget(raw);
+  if (overBudget) return overBudget;
+  return validatePasswordInput(raw, { mode: 'register', username });
+}
+
+/** Build the `POST /api/admin/users` body. A blank display name is omitted. */
+export function buildCreateUserPayload(values: UserFormValues): CreateUserPayload {
+  const payload: CreateUserPayload = {
+    username: sanitizeText(values.username),
+    password: values.password,
+    role: values.role,
+  };
+  const displayName = sanitizeText(values.displayName);
+  if (displayName.length > 0) payload.displayName = displayName;
+  return payload;
+}
+
+/** Edit-account dialog values (`PATCH /api/admin/users/[id]`). */
+export interface UserEditValues {
+  displayName: string;
+  role: UserRole;
+  status: UserStatus;
+}
+
+export interface UserEditErrors {
+  displayName: string | null;
+  role: string | null;
+  status: string | null;
+}
+
+export function userEditValuesOf(user: UserPublic): UserEditValues {
+  return { displayName: user.displayName ?? '', role: user.role, status: user.status };
+}
+
+export function emptyUserEditErrors(): UserEditErrors {
+  return { displayName: null, role: null, status: null };
+}
+
+export function hasUserEditErrors(errors: UserEditErrors): boolean {
+  return errors.displayName !== null || errors.role !== null || errors.status !== null;
+}
+
+export function validateUserEditForm(values: UserEditValues): UserEditErrors {
+  return {
+    displayName: validateDisplayNameInput(values.displayName),
+    role: validateUserRoleInput(values.role),
+    status: validateUserStatusInput(values.status),
+  };
+}
+
+/** Build the `PATCH /api/admin/users/[id]` body: `null` clears the display name. */
+export function buildUpdateUserPayload(values: UserEditValues): UpdateUserPayload {
+  const displayName = sanitizeText(values.displayName);
+  return {
+    displayName: displayName.length > 0 ? displayName : null,
+    role: values.role,
+    status: values.status,
+  };
+}
+
+/** Canonicalise the debounced search term the list query will carry. */
+export function normalizeUserSearch(value: unknown): string {
+  if (typeof value !== 'string') return '';
+  return sanitizeText(value).slice(0, USER_SEARCH_MAX_LENGTH);
+}
+
+/**
+ * Operator copy for a rejected account action.
+ *
+ * `withAdmin` answers 403 for a member and `mapDomainError` returns the domain
+ * error's own wording, which is deliberately terse API language ("at least one
+ * active admin must remain"). The store's messages are stable strings, so they are
+ * translated here instead of being rendered raw - while an unknown message is shown
+ * unchanged rather than swallowed.
+ */
+const USER_RULE_COPY: Readonly<Record<string, string>> = {
+  'at least one active admin must remain':
+    'At least one active admin must remain. Promote another account to admin first.',
+  'you cannot disable your own account':
+    'You cannot disable your own account. Ask another administrator to do it.',
+  'you cannot remove your own admin role':
+    'You cannot remove your own admin role. Ask another administrator to do it.',
+  'you cannot delete your own account':
+    'You cannot delete your own account. Ask another administrator to do it.',
+  'username is already taken': 'That username is already taken. Pick another one.',
+  'user not found': 'That account no longer exists. Refresh the list and try again.',
+  'username is required': 'Enter a username.',
+  'username must be at least 3 characters': 'The username must be at least 3 characters.',
+  'username must be at most 32 characters': 'The username must be at most 32 characters.',
+  // The store builds this sentence from two literals; the key is the joined result.
+  ['username may only contain letters, digits, dot, dash and underscore, and must start ' +
+    'with a letter or digit']:
+    'Use letters, digits, dot, dash or underscore, starting with a letter or digit.',
+  'password is required': 'Enter a password.',
+  'password must be at least 8 characters': 'The password must be at least 8 characters.',
+  'password must be at most 200 characters': 'The password must be at most 200 characters.',
+  'password must contain at least one letter': 'The password must contain at least one letter.',
+  'password must contain at least one digit': 'The password must contain at least one digit.',
+  'password must not contain the username': 'The password must not contain the username.',
+  'displayname must be a string': 'Enter a display name or leave the field empty.',
+  'displayname must be at most 64 characters':
+    'The display name must be at most 64 characters.',
+  "role must be 'admin' or 'member'": "Choose 'admin' or 'member'.",
+  "status must be 'active' or 'disabled'": "Choose 'active' or 'disabled'.",
+};
+
+/** Translate one server message into operator copy; never returns an empty string. */
+export function describeUserRuleMessage(message: string): string {
+  if (typeof message !== 'string' || message.trim().length === 0) {
+    return 'The account change was refused.';
+  }
+  const key = message.trim().toLowerCase();
+  // Own-property lookup only: `USER_RULE_COPY['constructor']` would otherwise return
+  // Object's constructor and `['__proto__']` its prototype, both of which are truthy
+  // but not strings - rendering one of those as copy would crash the dialog.
+  const mapped = Object.prototype.hasOwnProperty.call(USER_RULE_COPY, key)
+    ? USER_RULE_COPY[key]
+    : undefined;
+  return mapped ?? message.trim();
 }

@@ -1,9 +1,16 @@
 import { ApiKeyValidationError, findActiveApiKey, touchApiKey } from '@/lib/apikeys';
-import { isAdminRequest, isSecureRequest } from '@/lib/auth';
+import { isSecureRequest } from '@/lib/auth';
 import { EncryptionError } from '@/lib/crypto';
 import { ConfigurationError, getMaxRequestBodyBytes } from '@/lib/env';
 import { ProviderValidationError } from '@/lib/providers';
-import type { ClientErrorBody, DataEnvelope, ErrorEnvelope } from '@/lib/types';
+import { authenticateRequest } from '@/lib/sessions';
+import { RegistrationClosedError } from '@/lib/settings';
+import {
+  UserNotFoundError,
+  UserRuleError,
+  UserValidationError,
+} from '@/lib/users';
+import type { AuthContext, ClientErrorBody, DataEnvelope, ErrorEnvelope } from '@/lib/types';
 
 const JSON_HEADERS: Record<string, string> = {
   'content-type': 'application/json; charset=utf-8',
@@ -39,6 +46,15 @@ export function unauthorized(): Response {
   return fail('unauthorized', 401);
 }
 
+/**
+ * C-GUARD: authenticated but not allowed. Deliberately a different message from
+ * `unauthorized` so the client can tell "sign in again" (401 => session-expired
+ * signal, redirect to login) from "you may not do this" (403 => stay put).
+ */
+export function forbidden(): Response {
+  return fail('forbidden', 403);
+}
+
 export function notFound(message = 'not found'): Response {
   return fail(message, 404);
 }
@@ -64,24 +80,79 @@ export function clientAuthenticationError(message = 'invalid x-api-key'): Respon
   return clientError(message, 401, 'authentication_error');
 }
 
+/**
+ * Legacy one-argument handler shape.
+ *
+ * Kept exported (it is part of the pre-C-GUARD surface the existing route handlers
+ * and any consumer may name) but `withAdmin` no longer accepts it as a union with
+ * {@link AuthHandler}: a function with fewer parameters is assignable to one with
+ * more, so the old handlers keep compiling without a cast.
+ */
 export type AdminHandler = (request: Request) => Response | Promise<Response>;
 
 /**
- * Guard wrapper for `/api/admin/**`: runs the handler only for a valid session,
- * otherwise answers `401 {error:{message:"unauthorized"}}` (C3).
+ * Handler that receives the resolved actor as well as the request (C-GUARD).
+ *
+ * Both guards take this one type: a handler that ignores the actor is still
+ * assignable (TypeScript allows fewer parameters), while a handler that *declares*
+ * a second parameter is checked against `AuthContext` instead of silently
+ * receiving it through a cast.
  */
-export async function withAdmin(request: Request, handler: AdminHandler): Promise<Response> {
-  let authorized = false;
+export type AuthHandler = (request: Request, context: AuthContext) => Response | Promise<Response>;
+
+function describeAuthFailure(error: unknown): void {
+  // Never echo the token or the cookie: only that a guard failed.
+  const name = error instanceof Error ? error.name : 'unknown';
+  console.error('[auth] session resolution failed', name);
+}
+
+function resolveActor(request: Request): AuthContext | null {
   try {
-    authorized = isAdminRequest(request);
-  } catch {
-    authorized = false;
+    return authenticateRequest(request);
+  } catch (error) {
+    describeAuthFailure(error);
+    return null;
   }
-  if (!authorized) return unauthorized();
+}
+
+/**
+ * C-GUARD: admin guard for `/api/admin/**`, same export name and arity as before.
+ *
+ *  - no/expired/revoked session, or a disabled user -> `401 {error:{message:"unauthorized"}}`
+ *  - a live session whose user is a `member`       -> `403 {error:{message:"forbidden"}}`
+ *  - an active `admin`                             -> the handler runs
+ *
+ * The actor is passed as the handler's second argument; the existing one-argument
+ * handlers simply ignore it.
+ */
+export async function withAdmin(
+  request: Request,
+  handler: AuthHandler,
+): Promise<Response> {
+  const context = resolveActor(request);
+  if (!context) return unauthorized();
+  if (context.user.role !== 'admin' || context.user.status !== 'active') return forbidden();
   try {
-    return await handler(request);
+    return await handler(request, context);
   } catch (error) {
     console.error('[admin] unhandled error', error);
+    return serverError('internal server error');
+  }
+}
+
+/**
+ * C-GUARD: require any live session and hand the actor to the handler.
+ *
+ * Missing/expired/revoked/disabled => `401 {error:{message:'unauthorized'}}`.
+ * A `member` is welcome here: role checks belong to `withAdmin`.
+ */
+export async function withAuth(request: Request, handler: AuthHandler): Promise<Response> {
+  const context = resolveActor(request);
+  if (!context) return unauthorized();
+  try {
+    return await handler(request, context);
+  } catch (error) {
+    console.error('[auth] unhandled error', error);
     return serverError('internal server error');
   }
 }
@@ -251,10 +322,22 @@ export function authorizeClientRequest(request: Request): ClientAuthorization {
 /**
  * Translate a known domain validation error into an admin error response (C4).
  * Returns `null` for anything unexpected so the caller can rethrow a 500.
+ *
+ * User errors: `UserValidationError` / `UserRuleError` (400 - the request cannot
+ * be honoured as made), `UserNotFoundError` (404), `RegistrationClosedError` (403).
  */
 export function mapDomainError(error: unknown): Response | null {
   if (error instanceof ApiKeyValidationError || error instanceof ProviderValidationError) {
     return fail(error.message, 400);
+  }
+  if (error instanceof UserValidationError || error instanceof UserRuleError) {
+    return fail(error.message, 400);
+  }
+  if (error instanceof UserNotFoundError) {
+    return notFound(error.message);
+  }
+  if (error instanceof RegistrationClosedError) {
+    return forbidden();
   }
   if (error instanceof ConfigurationError || error instanceof EncryptionError) {
     // Configuration problems are server-side; the message is actionable but

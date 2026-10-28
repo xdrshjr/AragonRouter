@@ -161,8 +161,13 @@ describe('toolchain: tsconfig.json / vitest.config.ts', () => {
   });
 });
 
-describe('toolchain: API route surface (acceptance: 11 routes under src/app/api)', () => {
-  /** Every documented handler, relative to `src/app/api`, with `/` separators. */
+describe('toolchain: API route surface (C-ROUTE-INVENTORY: 22 routes under src/app/api)', () => {
+  /**
+   * C-ROUTE-INVENTORY: every documented handler, relative to `src/app/api`, with `/`
+   * separators. The list is the contract `auth-api` publishes and `admin-users-api`
+   * consumes, so it is asserted as an exact set: a missing route breaks the console,
+   * and a stray `route.ts` is an undocumented endpoint that nobody reviews.
+   */
   const EXPECTED_ROUTES = [
     'admin/keys/route.ts',
     'admin/keys/[id]/route.ts',
@@ -171,16 +176,27 @@ describe('toolchain: API route surface (acceptance: 11 routes under src/app/api)
     'admin/providers/[id]/route.ts',
     'admin/providers/[id]/test/route.ts',
     'admin/session/route.ts',
+    'admin/settings/route.ts',
     'admin/stats/route.ts',
+    'admin/users/route.ts',
+    'admin/users/[id]/route.ts',
+    'admin/users/[id]/password/route.ts',
+    'admin/users/[id]/sessions/[sessionId]/route.ts',
+    'auth/captcha/route.ts',
+    'auth/login/route.ts',
+    'auth/logout/route.ts',
+    'auth/password/route.ts',
+    'auth/register/route.ts',
+    'auth/session/route.ts',
     'v1/chat/completions/route.ts',
     'v1/messages/route.ts',
     'v1/models/route.ts',
   ].sort();
 
-  it('keeps exactly the 11 documented route handlers in place', () => {
+  function discoverRoutes(): string[] {
     const apiRoot = path.join(root, 'src/app/api');
     expect(fs.existsSync(apiRoot)).toBe(true);
-    const routes = fs
+    return fs
       .readdirSync(apiRoot, { recursive: true, withFileTypes: true })
       .filter((entry) => entry.isFile() && entry.name === 'route.ts')
       .map((entry) => {
@@ -188,9 +204,64 @@ describe('toolchain: API route surface (acceptance: 11 routes under src/app/api)
         return path.relative(apiRoot, path.join(parent, entry.name)).split(path.sep).join('/');
       })
       .sort();
+  }
+
+  it('keeps exactly the 22 documented route handlers in place', () => {
+    const routes = discoverRoutes();
     // A deleted route (or a stray one) must fail the build, not the console.
     expect(routes).toEqual(EXPECTED_ROUTES);
-    expect(routes).toHaveLength(11);
+    expect(routes).toHaveLength(22);
+  });
+
+  it('inventories the six account routes and the five admin user-management routes', () => {
+    const routes = discoverRoutes();
+    expect(routes.filter((route) => route.startsWith('auth/'))).toEqual([
+      'auth/captcha/route.ts',
+      'auth/login/route.ts',
+      'auth/logout/route.ts',
+      'auth/password/route.ts',
+      'auth/register/route.ts',
+      'auth/session/route.ts',
+    ]);
+    expect(
+      routes.filter(
+        (route) => route.startsWith('admin/users') || route === 'admin/settings/route.ts',
+      ),
+    ).toEqual([
+        'admin/settings/route.ts',
+        'admin/users/[id]/password/route.ts',
+        'admin/users/[id]/route.ts',
+        'admin/users/[id]/sessions/[sessionId]/route.ts',
+        'admin/users/route.ts',
+      ]);
+  });
+
+  it('keeps the automation entry point at /api/admin/session (no captcha added there)', () => {
+    // `scripts/test-api.ps1` and the CI smoke tests post `{password}` there; requiring a
+    // captcha would break every automated client silently, so its absence is pinned.
+    const source = fs.readFileSync(
+      path.join(root, 'src/app/api/admin/session/route.ts'),
+      'utf8',
+    );
+    expect(source).toMatch(/export async function POST/);
+    expect(source).not.toMatch(/captcha/i);
+  });
+
+  it('declares the shared runtime/segment config on every account route', () => {
+    for (const route of [
+      'auth/captcha/route.ts',
+      'auth/login/route.ts',
+      'auth/logout/route.ts',
+      'auth/password/route.ts',
+      'auth/register/route.ts',
+      'auth/session/route.ts',
+    ]) {
+      const source = fs.readFileSync(path.join(root, 'src/app/api', route), 'utf8');
+      // `nodejs` because the store is `node:sqlite`; `force-dynamic` because a cached
+      // session answer would show a signed-out user to a signed-in one.
+      expect(source, route).toContain("export const runtime = 'nodejs'");
+      expect(source, route).toContain("export const dynamic = 'force-dynamic'");
+    }
   });
 });
 

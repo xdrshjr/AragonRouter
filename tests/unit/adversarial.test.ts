@@ -102,14 +102,14 @@ describe('admin auth: complete 401 matrix (C3)', () => {
     }
   });
 
-  it('rejects forged, expired and truncated session cookies', async () => {
+  it('rejects forged, legacy, expired and truncated session cookies', async () => {
     createApiKey('cookie-target', 'key-cookie');
     const forged = [
       '',
       'garbage',
       'abc.def',
       `${Date.now()}.${'0'.repeat(64)}`,
-      forgeToken(Date.now() - 1_000), // correctly signed but already expired
+      forgeToken(Date.now() - 1_000), // legacy HMAC token: no longer a credential
       forgeToken(Date.now() + 60_000, 'a-different-signing-secret-of-32-chars'),
       `${Date.now() + 60_000}.${'a'.repeat(64)}.extra`,
       `${'9'.repeat(20)}.${'a'.repeat(64)}`,
@@ -123,10 +123,12 @@ describe('admin auth: complete 401 matrix (C3)', () => {
       expect(await readJson(response), token).toEqual({ error: { message: 'unauthorized' } });
     }
 
+    // Only a real database session is accepted, even though it has the same
+    // `<sessionId>.<secret>` shape as the legacy signed tokens above.
     const valid = await keysRoute.GET(
       new Request(`${BASE}/api/admin/keys`, {
         method: 'GET',
-        headers: { cookie: `${SESSION_COOKIE}=${forgeToken(Date.now() + 60_000)}` },
+        headers: { cookie: `${SESSION_COOKIE}=${createSessionToken(Date.now())}` },
       }),
     );
     expect(valid.status).toBe(200);

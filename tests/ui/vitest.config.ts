@@ -31,7 +31,18 @@ export default defineConfig({
   },
   test: {
     environment: 'node',
-    include: ['tests/ui/**/*.test.ts', 'tests/ui/**/*.test.tsx'],
+    include: [
+      'tests/ui/**/*.test.ts',
+      'tests/ui/**/*.test.tsx',
+      /**
+       * `tests/users-admin-ui/**` is the same console suite, registered here for the
+       * user-management work package. One glob list (rather than a second config)
+       * keeps a single command for every console assertion, and a file can move
+       * between the two directories without rewriting its imports.
+       */
+      'tests/users-admin-ui/**/*.test.ts',
+      'tests/users-admin-ui/**/*.test.tsx',
+    ],
     globals: false,
     clearMocks: true,
     restoreMocks: true,

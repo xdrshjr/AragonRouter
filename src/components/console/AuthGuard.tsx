@@ -1,104 +1,71 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { usePathname, useRouter } from 'next/navigation';
-import { Spinner } from '@/components/ui/Spinner';
-import { Button } from '@/components/ui/Button';
-import { getSession, signOut } from '@/components/console/api';
-import { watchSessionExpiry } from '@/components/console/session-expiry';
-import { LOGIN_PATH } from '@/components/console/nav';
-import { Sidebar } from '@/components/console/Sidebar';
-import { Topbar } from '@/components/console/Topbar';
+import { useCallback, useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react';
+import { usePathname } from 'next/navigation';
+import { useAuth, useOptionalAuth } from '@/components/auth/auth-context';
+import { AdminRequiredMask, GuestMask } from '@/components/auth/AccessMasks';
+import { SESSION_EXPIRED_NOTICE } from '@/components/auth/messages';
+import type { AuthStatus } from '@/components/auth/auth-machine';
+import type { UserPublic } from '@/components/console/types';
+import { LoadingBlock } from '@/components/ui/Spinner';
 import { useToast } from '@/components/ui/Toast';
 import { cn } from '@/components/ui/cn';
+import { subscribeSessionExpired } from '@/components/console/session-expiry';
+import { buildLoginHref } from '@/components/console/session-gate';
+import { Sidebar } from '@/components/console/Sidebar';
+import { Topbar } from '@/components/console/Topbar';
 
-/** Build `/login?next=<path>` without ever emitting an open redirect. */
-export function buildLoginRedirect(pathname: string | null | undefined): string {
-  if (typeof pathname !== 'string' || !pathname.startsWith('/') || pathname.startsWith('//')) {
-    return LOGIN_PATH;
-  }
-  if (pathname === LOGIN_PATH || pathname.startsWith(`${LOGIN_PATH}?`)) return LOGIN_PATH;
-  return `${LOGIN_PATH}?next=${encodeURIComponent(pathname)}`;
+export interface AuthGuardProps {
+  children: ReactNode;
 }
 
-type GuardState = 'checking' | 'authenticated' | 'anonymous';
+/** Fixed desktop navigation rail. */
+const RAIL_CLASS = 'fixed inset-y-0 left-0 z-20 hidden w-56 border-r border-border bg-surface lg:block';
 
 /**
- * Client-side session gate for the console.
+ * Console shell for **everybody** (guest-first, C-AUTH-CONTEXT).
  *
- * The pages already refuse to render without a C3-shaped cookie (see
- * `session-gate.ts`, which covers "no session at all" and the JavaScript-disabled
- * case). This guard proves the cookie itself: C3 exposes no server-readable
- * identity, so the console calls `GET /api/admin/session` once on mount and
- * redirects to `/login` when it answers 401.
+ * The previous version proved the cookie and redirected to `/login`; the product
+ * decision retired that: a visitor may walk into `/console` and `/console/keys`,
+ * see the sidebar, the top bar and the page frame, and is only asked to sign in for
+ * the panel data. So the shell renders in all three states:
  *
- * The API is still the only authority: every page fetch re-checks the session, a
- * 401 from any admin call re-runs this redirect, and the transport layer raises a
- * global expiry signal (`session-expiry.ts`) that this guard subscribes to, so
- * mutations redirect too.
+ *  - `loading`  - skeleton while `GET /api/auth/session` is in flight;
+ *  - `guest`    - shell + sign-in mask, and **`children` are not mounted**, so no
+ *                 panel ever issues an admin request;
+ *  - `authenticated` - `admin` gets the panels; a `member` gets the
+ *                 "administrator access required" mask, because every console
+ *                 endpoint answers 403 for that role.
+ *
+ * Expiry is still detected at the transport layer (`api.ts` raises the signal on
+ * any `/api/admin/**` 401). Instead of navigating, the shell returns to the guest
+ * view and opens the dialog, so the operator keeps their place in the console.
  */
-export function AuthGuard({ children }: { children: ReactNode }): ReactNode {
-  const router = useRouter();
+export function AuthGuard({ children }: AuthGuardProps): ReactNode {
+  const auth = useAuth();
   const pathname = usePathname();
-  const [state, setState] = useState<GuardState>('checking');
-  const [signingOut, setSigningOut] = useState(false);
-  const [navOpen, setNavOpen] = useState(false);
   const toast = useToast();
-  const mounted = useRef(true);
-  /** The session is verified once per mount; navigation must not blank the shell. */
-  const verified = useRef(false);
-  /** Latest route, read by the expiry subscription (which outlives a navigation). */
-  const currentPath = useRef(pathname);
-  currentPath.current = pathname;
+  const [navOpen, setNavOpen] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
+  /** Latest context, read by the long-lived expiry subscription. */
+  const latest = useRef(auth);
+  latest.current = auth;
+  /** Coalesces a burst of parallel 401s into one probe. */
+  const probing = useRef(false);
 
+  // Any admin 401: back to the guest view (the probe re-reads the truth) plus the
+  // dialog, so nothing silently stops working. No navigation, no lost location.
   useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    // A second verification on every navigation would unmount the shell (and the
-    // page) on each click. Once the API has confirmed the cookie, later 401s are
-    // caught by the expiry signal subscribed below (and, redundantly, by
-    // `useSessionExpiryRedirect` on the page's own data request).
-    if (verified.current) return;
-    const controller = new AbortController();
-    setState('checking');
-    getSession(controller.signal)
-      .then((ok) => {
-        if (!mounted.current) return;
-        if (ok) {
-          verified.current = true;
-          setState('authenticated');
-          return;
-        }
-        setState('anonymous');
-        router.replace(buildLoginRedirect(pathname));
-      })
-      .catch(() => {
-        if (!mounted.current) return;
-        setState('anonymous');
-        router.replace(buildLoginRedirect(pathname));
+    return subscribeSessionExpired(() => {
+      const current = latest.current;
+      current.openLogin('login', SESSION_EXPIRED_NOTICE);
+      if (probing.current) return;
+      probing.current = true;
+      void current.refresh().finally(() => {
+        probing.current = false;
       });
-    return () => {
-      controller.abort();
-    };
-  }, [pathname, router]);
-
-  // An expired session is announced by the transport layer (`api.ts` raises the
-  // signal on any 401), not by each panel: this subscription is what makes
-  // 'Create key', 'Revoke', 'Add/Edit/Delete provider', the enabled toggle and
-  // 'Test connection' navigate to /login instead of failing silently. Firing once
-  // keeps parallel 401s from racing over the history entry.
-  useEffect(() => {
-    const watcher = watchSessionExpiry(() => {
-      setState('anonymous');
-      router.replace(buildLoginRedirect(currentPath.current));
     });
-    return watcher.unsubscribe;
-  }, [router]);
+  }, []);
 
   // Close the mobile drawer whenever the route changes.
   useEffect(() => {
@@ -117,31 +84,36 @@ export function AuthGuard({ children }: { children: ReactNode }): ReactNode {
     };
   }, [navOpen]);
 
+  /**
+   * A guest clicking any navigation entry is asking for panel data, so the shell
+   * answers with the dialog instead of a navigation that would land on the same
+   * mask. Keyboard activation fires a click too, so this covers both. The sidebar
+   * itself belongs to another work package and stays untouched.
+   */
+  const guardNavigation = useCallback(
+    (event: MouseEvent<HTMLDivElement>) => {
+      if (!auth.isGuest) return;
+      const target = event.target;
+      if (!(target instanceof HTMLElement) || !target.closest('a')) return;
+      event.preventDefault();
+      event.stopPropagation();
+      auth.openLogin('login');
+    },
+    [auth],
+  );
+
   const handleSignOut = useCallback(() => {
     setSigningOut(true);
-    signOut()
+    void auth
+      .signOut()
       .catch(() => {
-        // A failed DELETE still means the UI must leave the protected area; the
-        // cookie may already be gone or the server may be restarting.
+        // `signOut` already tolerates transport failures; only the toast is left.
       })
       .finally(() => {
-        if (!mounted.current) return;
         setSigningOut(false);
         toast.push({ title: 'Signed out', tone: 'success' });
-        router.replace(LOGIN_PATH);
       });
-  }, [router, toast]);
-
-  if (state !== 'authenticated') {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-bg">
-        <div className="flex items-center gap-2 text-sm text-muted" role="status" aria-live="polite">
-          <Spinner size={16} label={null} />
-          <span>{state === 'checking' ? 'Checking your session' : 'Redirecting to sign in'}</span>
-        </div>
-      </div>
-    );
-  }
+  }, [auth, toast]);
 
   return (
     <div className="min-h-screen bg-bg">
@@ -150,8 +122,10 @@ export function AuthGuard({ children }: { children: ReactNode }): ReactNode {
       </a>
 
       {/* Desktop rail */}
-      <aside className="fixed inset-y-0 left-0 z-20 hidden w-56 border-r border-border bg-surface lg:block">
-        <Sidebar />
+      <aside className={RAIL_CLASS}>
+        <div onClick={guardNavigation}>
+          <Sidebar />
+        </div>
       </aside>
 
       {/* Mobile drawer */}
@@ -173,15 +147,18 @@ export function AuthGuard({ children }: { children: ReactNode }): ReactNode {
           aria-modal={navOpen || undefined}
           aria-label="Console navigation"
           className={cn(
-            'absolute inset-y-0 left-0 w-64 border-r border-border bg-surface shadow-pop transition-transform duration-200 ease-console',
+            'absolute inset-y-0 left-0 w-64 border-r border-border bg-surface shadow-pop',
+            'transition-transform duration-200 ease-console',
             navOpen ? 'translate-x-0' : '-translate-x-full',
           )}
         >
-          <Sidebar
-            onNavigate={() => {
-              setNavOpen(false);
-            }}
-          />
+          <div onClick={guardNavigation}>
+            <Sidebar
+              onNavigate={() => {
+                setNavOpen(false);
+              }}
+            />
+          </div>
         </div>
       </div>
 
@@ -191,11 +168,26 @@ export function AuthGuard({ children }: { children: ReactNode }): ReactNode {
           onOpenNav={() => {
             setNavOpen(true);
           }}
-          onSignOut={handleSignOut}
-          signingOut={signingOut}
         />
         <main id="console-main" className="mx-auto w-full max-w-console px-4 py-6 sm:px-6">
-          {children}
+          <ConsoleBody
+            status={auth.status}
+            isGuest={auth.isGuest}
+            isAdmin={auth.isAdmin}
+            user={auth.user}
+            registrationEnabled={auth.registrationEnabled}
+            loginHref={buildLoginHref(pathname)}
+            onSignIn={() => {
+              auth.openLogin('login');
+            }}
+            onRegister={() => {
+              auth.openLogin('register');
+            }}
+            onSignOut={handleSignOut}
+            signingOut={signingOut}
+          >
+            {children}
+          </ConsoleBody>
         </main>
         <footer className="mx-auto w-full max-w-console px-4 pb-8 sm:px-6">
           <p className="border-t border-border pt-4 text-[11px] leading-4 text-muted">
@@ -208,20 +200,79 @@ export function AuthGuard({ children }: { children: ReactNode }): ReactNode {
   );
 }
 
+interface ConsoleBodyProps {
+  status: AuthStatus;
+  isGuest: boolean;
+  isAdmin: boolean;
+  user: UserPublic | null;
+  registrationEnabled: boolean;
+  loginHref: string;
+  onSignIn: () => void;
+  onRegister: () => void;
+  onSignOut: () => void;
+  signingOut: boolean;
+  children: ReactNode;
+}
+
 /**
- * Redirect to `/login` when a given error reports 401.
+ * The main area: skeleton, mask or the actual page.
  *
- * The primary path is now the transport-level signal (`session-expiry.ts`), which
- * `AuthGuard` subscribes to and which covers queries and mutations alike. This hook
- * is the per-error fallback: a page hands it the error it already holds, so the
- * redirect also works where the shell is not mounted (and stays obvious in tests).
+ * Kept as its own component so the shell above stays a layout description and the
+ * rule "a guest never mounts the panels" is visible in one place.
+ */
+function ConsoleBody({
+  status,
+  isGuest,
+  isAdmin,
+  user,
+  registrationEnabled,
+  loginHref,
+  onSignIn,
+  onRegister,
+  onSignOut,
+  signingOut,
+  children,
+}: ConsoleBodyProps): ReactNode {
+  if (status === 'loading') {
+    return (
+      <div role="status" aria-live="polite">
+        <LoadingBlock label="Checking your session" />
+      </div>
+    );
+  }
+  if (isGuest) {
+    return (
+      <GuestMask
+        onSignIn={onSignIn}
+        onRegister={onRegister}
+        registrationEnabled={registrationEnabled}
+        loginHref={loginHref}
+      />
+    );
+  }
+  if (!isAdmin) {
+    return (
+      <AdminRequiredMask user={user} onSignOut={onSignOut} signingOut={signingOut} />
+    );
+  }
+  return <>{children}</>;
+}
+
+/**
+ * Fallback hook for a panel that holds a 401 error object.
+ *
+ * The authoritative path is the transport-level signal above, which fires for
+ * queries and mutations alike. This hook keeps the per-error behaviour that panels
+ * already call: the same one-shot decision, but expressed as "open the dialog"
+ * instead of "navigate to /login" - the shell must not throw away the location the
+ * operator was working in. Outside a provider it does nothing.
  */
 export function useSessionExpiryRedirect(error: { status: number } | null): void {
-  const router = useRouter();
-  const pathname = usePathname();
+  const auth = useOptionalAuth();
+  const openLogin = auth?.openLogin;
 
   useEffect(() => {
-    if (!error || error.status !== 401) return;
-    router.replace(buildLoginRedirect(pathname));
-  }, [error, pathname, router]);
+    if (!error || error.status !== 401 || !openLogin) return;
+    openLogin('login', SESSION_EXPIRED_NOTICE);
+  }, [error, openLogin]);
 }

@@ -1,28 +1,52 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ADMIN_API_BASE,
+  ADMIN_REQUIRED_MESSAGE,
+  AUTH_API_BASE,
   ApiError,
   SESSION_EXPIRED_MESSAGE,
+  buildUsersQuery,
+  changePassword,
   createKey,
   createProvider,
+  createUser,
   deleteProvider,
+  deleteUser,
+  describeApiFailure,
+  fetchAuthState,
+  fetchCaptcha,
   getSession,
+  getSettings,
   getStats,
+  getUser,
   isAbortError,
+  isForbidden,
   isUnauthorized,
   listKeys,
   listLogs,
   listProviders,
+  listUsers,
+  login,
+  logout,
   parseJsonBody,
   readErrorMessage,
+  register,
+  resetUserPassword,
   revokeKey,
+  revokeUserSession,
   signIn,
   signOut,
   testProvider,
   unwrapData,
   unwrapList,
   updateProvider,
+  updateSettings,
+  updateUser,
 } from '@/components/console/api';
+import {
+  resetSessionExpiredListeners,
+  subscribeSessionExpired,
+} from '@/components/console/session-expiry';
 
 /**
  * Contract tests for the console API client (C3-C8).
@@ -91,9 +115,11 @@ const LOG_ROW = {
 
 beforeEach(() => {
   calls.length = 0;
+  resetSessionExpiredListeners();
 });
 
 afterEach(() => {
+  resetSessionExpiredListeners();
   vi.unstubAllGlobals();
 });
 
@@ -374,5 +400,244 @@ describe('envelope helpers', () => {
     expect(unwrapList<number>({ data: [] })).toEqual({ data: [], nextCursor: null });
     expect(() => unwrapList({ data: 'nope' })).toThrow(ApiError);
     expect(() => unwrapList(null)).toThrow(ApiError);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* C-CLIENT-API - the account and user-management surface                     */
+/* -------------------------------------------------------------------------- */
+
+const USER_ROW = {
+  id: 'user-1',
+  username: 'member-one',
+  displayName: 'Member One',
+  role: 'member',
+  status: 'active',
+  createdAt: '2025-01-01T00:00:00.000Z',
+  updatedAt: '2025-01-01T00:00:00.000Z',
+  lastLoginAt: null,
+};
+
+const CAPTCHA_ROW = {
+  challengeId: 'c'.repeat(32),
+  imageDataUrl: 'data:image/svg+xml;base64,PHN2Zy8+',
+  expiresAt: '2025-01-01T00:05:00.000Z',
+};
+
+describe('C-AUTH-WIRE client', () => {
+  it('reads the session for a guest as data, not as an error', async () => {
+    respondWith({ data: { user: null, registration: { enabled: true } } });
+    await expect(fetchAuthState()).resolves.toEqual({
+      user: null,
+      registration: { enabled: true },
+    });
+    expect(calls[0]?.url).toBe(`${AUTH_API_BASE}/session`);
+    expect(calls[0]?.init?.method).toBe('GET');
+  });
+
+  it('returns the signed-in account and the registration switch', async () => {
+    respondWith({ data: { user: USER_ROW, registration: { enabled: false } } });
+    const state = await fetchAuthState();
+    expect(state.user?.username).toBe('member-one');
+    expect(state.registration.enabled).toBe(false);
+  });
+
+  it('rejects a user shape the shell cannot trust for identity', async () => {
+    respondWith({ data: { user: { id: 'x' }, registration: { enabled: true } } });
+    const failure = await fetchAuthState().catch((error: unknown) => error);
+    expect((failure as ApiError).kind).toBe('protocol');
+  });
+
+  it('loads a captcha and refuses one without a usable image', async () => {
+    respondWith({ data: CAPTCHA_ROW });
+    const challenge = await fetchCaptcha();
+    expect(challenge.challengeId).toBe(CAPTCHA_ROW.challengeId);
+    expect(challenge.imageDataUrl.startsWith('data:image/svg+xml')).toBe(true);
+
+    respondWith({ data: { challengeId: 'abc', imageDataUrl: 'https://evil.example/x.svg' } });
+    const failure = await fetchCaptcha().catch((error: unknown) => error);
+    expect((failure as ApiError).kind).toBe('protocol');
+  });
+
+  it('posts username, password and captcha, and normalises the answer', async () => {
+    respondWith({ data: { user: USER_ROW } });
+    await expect(
+      login({
+        username: ' member-one ',
+        password: 'secret',
+        challengeId: ' ch-1 ',
+        captchaAnswer: ' abcde ',
+      }),
+    ).resolves.toMatchObject({ id: 'user-1' });
+
+    const body = JSON.parse(String(calls[0]?.init?.body)) as Record<string, unknown>;
+    expect(calls[0]?.url).toBe(`${AUTH_API_BASE}/login`);
+    expect(calls[0]?.init?.method).toBe('POST');
+    expect(body).toEqual({
+      username: 'member-one',
+      password: 'secret',
+      challengeId: 'ch-1',
+      captchaAnswer: 'ABCDE',
+    });
+  });
+
+  it('registers with the optional display name and never a role', async () => {
+    respondWith({ data: { user: USER_ROW } }, 201);
+    await register({
+      username: 'member-one',
+      password: 'Quiet-H4rbour-1',
+      displayName: ' Member One ',
+      challengeId: 'ch-1',
+      captchaAnswer: 'ABCDE',
+    });
+    const body = JSON.parse(String(calls[0]?.init?.body)) as Record<string, unknown>;
+    expect(calls[0]?.url).toBe(`${AUTH_API_BASE}/register`);
+    expect(body.displayName).toBe('Member One');
+    expect(body).not.toHaveProperty('role');
+  });
+
+  it('logs out and rotates the password through the auth surface', async () => {
+    respondWith({ data: { ok: true } });
+    await expect(logout()).resolves.toBeUndefined();
+    expect(calls[0]?.url).toBe(`${AUTH_API_BASE}/logout`);
+    expect(calls[0]?.init?.method).toBe('POST');
+
+    respondWith({ data: { ok: true } });
+    calls.length = 0;
+    await expect(
+      changePassword({ currentPassword: 'old-password', newPassword: 'Quiet-H4rbour-1' }),
+    ).resolves.toBeUndefined();
+    expect(calls[0]?.url).toBe(`${AUTH_API_BASE}/password`);
+    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({
+      currentPassword: 'old-password',
+      newPassword: 'Quiet-H4rbour-1',
+    });
+  });
+
+  /**
+   * The 401 policy that makes the guest-first shell work: a credential failure on
+   * `/api/auth/**` stays inline, while `/api/admin/**` still announces the expiry.
+   */
+  it('keeps an auth 401 inline and does not announce a session expiry', async () => {
+    const expired = vi.fn();
+    subscribeSessionExpired(expired);
+    respondWithStatus(401, { error: { message: 'invalid username or password' } });
+
+    const failure = await login({
+      username: 'admin',
+      password: 'wrong',
+      challengeId: 'ch-1',
+      captchaAnswer: 'ABCDE',
+    }).catch((error: unknown) => error);
+
+    expect((failure as ApiError).status).toBe(401);
+    expect((failure as ApiError).message).toBe('invalid username or password');
+    expect(expired).not.toHaveBeenCalled();
+  });
+
+  it('still announces the expiry for an admin 401', async () => {
+    const expired = vi.fn();
+    subscribeSessionExpired(expired);
+    respondWithStatus(401, { error: { message: 'unauthorized' } });
+
+    const failure = await listKeys().catch((error: unknown) => error);
+
+    expect((failure as ApiError).message).toBe(SESSION_EXPIRED_MESSAGE);
+    expect(expired).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('C-USERS-WIRE / C-SETTINGS-WIRE client', () => {
+  it('builds a user query without empty filters', () => {
+    expect(buildUsersQuery({})).toBe('');
+    expect(buildUsersQuery({ role: '', status: '', search: '   ', cursor: null })).toBe('');
+    const query = new URLSearchParams(
+      buildUsersQuery({
+        limit: 25,
+        search: ' alice ',
+        role: 'member',
+        status: 'active',
+        cursor: '9|u1',
+      }),
+    );
+    expect(query.get('limit')).toBe('25');
+    expect(query.get('search')).toBe('alice');
+    expect(query.get('role')).toBe('member');
+    expect(query.get('status')).toBe('active');
+    expect(query.get('cursor')).toBe('9|u1');
+  });
+
+  it('lists, creates, reads, patches and deletes accounts', async () => {
+    respondWith({ data: [USER_ROW], nextCursor: '9|u1' });
+    const page = await listUsers({ role: 'member' });
+    expect(page.data[0]?.username).toBe('member-one');
+    expect(page.nextCursor).toBe('9|u1');
+    expect(calls[0]?.url).toBe(`${ADMIN_API_BASE}/users?role=member`);
+
+    respondWith({ data: USER_ROW }, 201);
+    const created = createUser({ username: 'member-one', password: 'Quiet-H4rbour-1' });
+    await expect(created).resolves.toMatchObject({ id: 'user-1' });
+    expect(calls[1]?.init?.method).toBe('POST');
+
+    respondWith({ data: { ...USER_ROW, sessions: [] } });
+    await expect(getUser('user/1')).resolves.toMatchObject({ sessions: [] });
+    expect(calls[2]?.url).toBe(`${ADMIN_API_BASE}/users/user%2F1`);
+
+    respondWith({ data: { ...USER_ROW, status: 'disabled' } });
+    await expect(updateUser('user-1', { status: 'disabled' })).resolves.toMatchObject({
+      status: 'disabled',
+    });
+    expect(calls[3]?.init?.method).toBe('PATCH');
+    expect(JSON.parse(String(calls[3]?.init?.body))).toEqual({ status: 'disabled' });
+
+    respondWith({ data: { ok: true } });
+    await expect(deleteUser('user-1')).resolves.toBeUndefined();
+    expect(calls[4]?.init?.method).toBe('DELETE');
+  });
+
+  it('resets a password and revokes one device session', async () => {
+    respondWith({ data: { ok: true } });
+    await expect(resetUserPassword('user-1', 'Quiet-H4rbour-1')).resolves.toBeUndefined();
+    expect(calls[0]?.url).toBe(`${ADMIN_API_BASE}/users/user-1/password`);
+    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({ password: 'Quiet-H4rbour-1' });
+
+    respondWith({ data: { ok: true } });
+    calls.length = 0;
+    await expect(revokeUserSession('user-1', 'sess/1')).resolves.toBeUndefined();
+    expect(calls[0]?.url).toBe(`${ADMIN_API_BASE}/users/user-1/sessions/sess%2F1`);
+    expect(calls[0]?.init?.method).toBe('DELETE');
+  });
+
+  it('reads and writes the registration switch with the documented body', async () => {
+    respondWith({ data: { registration: { enabled: true } } });
+    await expect(getSettings()).resolves.toEqual({ enabled: true });
+
+    respondWith({ data: { registration: { enabled: false } } });
+    calls.length = 0;
+    await expect(updateSettings({ enabled: false })).resolves.toEqual({ enabled: false });
+    expect(calls[0]?.url).toBe(`${ADMIN_API_BASE}/settings`);
+    expect(calls[0]?.init?.method).toBe('PATCH');
+    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({ registration: { enabled: false } });
+  });
+
+  it('reports a malformed settings envelope instead of guessing', async () => {
+    respondWith({ data: { registration: null } });
+    const failure = await getSettings().catch((error: unknown) => error);
+    expect((failure as ApiError).kind).toBe('protocol');
+  });
+
+  it('translates a 403 into administrator-only copy without announcing an expiry', async () => {
+    const expired = vi.fn();
+    subscribeSessionExpired(expired);
+    respondWithStatus(403, { error: { message: 'forbidden' } });
+
+    const failure = await listKeys().catch((error: unknown) => error);
+
+    // The transport keeps the server's word - the gateway contract pins it.
+    expect((failure as ApiError).message).toBe('forbidden');
+    expect(isForbidden(failure)).toBe(true);
+    // The console shows operator copy instead.
+    expect(describeApiFailure(failure)).toBe(ADMIN_REQUIRED_MESSAGE);
+    expect(expired).not.toHaveBeenCalled();
   });
 });
